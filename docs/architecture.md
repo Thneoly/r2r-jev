@@ -85,17 +85,35 @@ This is a small demonstration of a broader R2R principle:
 
 ## Current demo semantics
 
-The public demo intentionally uses a small transition chain:
+The public demo intentionally uses a small transition chain, played out in
+three acts over a persistent state:
 
 ```text
-BeyondScopeEvidence
-   ↓ weakens
-Trust: Active -> Warning
-   ↓ degrades
-Delegation: Active -> Degraded
-   ↓ constrains
-Authorization: Active -> Suspended
+Act 1  BeyondScopeEvidence
+          ↓ weakens
+       Trust: Active -> Warning
+          ↓ degrades
+       Delegation: Active -> Degraded
+          ↓ constrains
+       Authorization: Active -> Suspended      -> DENY current call
+
+Act 2  A later, below-threshold judgment is still admitted as evidence,
+       but the decision inherits the suspended authorization
+       -> DENY a call a stateless gate would ALLOW
+
+Act 3  human_override (itself a governance event)
+          ↓ repairs
+       Authorization: Suspended -> Active
+          ↓ creates
+       Supervision relation (supervisor = the human)
+       -> ALLOW under supervision
 ```
+
+Every admitted event, evidence record, and relation transition receives a
+deterministic sequential id (`ev-0001`, `evidence-0001`, `trust-0001`, ...),
+and the demo prints the causal provenance chain that connects them. There are
+no clocks and no randomness: replaying the same event sequence reproduces the
+same ids and the same output byte for byte.
 
 The full R2R project explores richer typed relations, conflicts, propagation boundaries, reconciliation, replay, and enforcement.
 

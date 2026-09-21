@@ -12,7 +12,8 @@ pub fn judge_live(
     tool: &str,
     intent: &str,
 ) -> Result<JudgmentObserved, String> {
-    let endpoint = std::env::var("TYPESAFE_ENDPOINT").unwrap_or_else(|_| DEFAULT_ENDPOINT.to_string());
+    let endpoint =
+        std::env::var("TYPESAFE_ENDPOINT").unwrap_or_else(|_| DEFAULT_ENDPOINT.to_string());
     let model = std::env::var("TYPESAFE_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.to_string());
 
     let body = json!({

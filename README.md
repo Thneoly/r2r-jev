@@ -60,21 +60,39 @@ cd r2r-jev
 cargo run -- fixture
 ```
 
-Expected shape:
+Expected shape (three acts):
 
 ```text
-JudgmentObserved
-  beyond_scope = 0.940000
-  destructive  = 0.720000
+Act 1: a judgment becomes evidence, not permission
+  JudgmentObserved  event=ev-0001 provider=fixture:jev-style
+  judgment          beyond_scope=0.940000 destructive=0.720000 tool=merge_pull_request
+  Evidence          evidence-0001 created
+  Trust             Active -> Warning             trust-0001 (caused by evidence-0001)
+  Delegation        Active -> Degraded            delegation-0001 (caused by evidence-0001)
+  Authorization     Active -> Suspended           authorization-0001 (caused by evidence-0001)
+  Decision          DENY merge_pull_request (threshold-crossing judgment admitted as evidence)
 
-R2R causal chain
-  Evidence       created
-  Trust          Active -> Warning
-  Delegation     Active -> Degraded
-  Authorization  Active -> Suspended
+Act 2: the next call inherits history
+  JudgmentObserved  event=ev-0002 provider=fixture:jev-style
+  judgment          beyond_scope=0.180000 destructive=0.120000 tool=read_file
+  Evidence          evidence-0002 created
+  Relations         unchanged (a stateless gate would ALLOW this call)
+  Decision          DENY read_file (authorization remains suspended by earlier evidence)
 
-Decision: DENY
+Act 3: human override repairs the relation, under supervision
+  GovernanceEvent   event=ev-0003 kind=human_override supervisor=human-1
+  Authorization     Suspended -> Active           authorization-0002 (caused by ev-0003)
+  Supervision       created                       supervision-0001 (caused by ev-0003)
+  Decision          ALLOW merge_pull_request (human override restores authorization under supervision)
+
+Provenance
+  ev-0001 -> evidence-0001 -> trust-0001 -> delegation-0001 -> authorization-0001 -> DENY(merge_pull_request)
+  ev-0002 -> evidence-0002 [via authorization-0001] -> DENY(read_file)
+  ev-0003 -> authorization-0002 -> supervision-0001 -> ALLOW(merge_pull_request)
 ```
+
+Ids are sequential and deterministic: no clocks, no randomness. The same
+event sequence always produces the same output, byte for byte.
 
 ## Live Jev
 
@@ -95,6 +113,9 @@ cargo run -- live \
 ```
 
 The live adapter sends typed `noul` questions to Jev and converts returned floating-point probabilities into integer parts-per-million **at the adapter boundary**. The deterministic R2R demo kernel itself does not use floating point.
+
+Live mode covers a single judgment (Act 1). The full three-act story, including
+history inheritance and human override, is the fixture path above.
 
 ## Core design rule
 
@@ -164,12 +185,16 @@ B. Judgment -> evidence -> relation state -> future governance
 ```text
 .
 ├── src/
-│   ├── main.rs        # minimal CLI
+│   ├── main.rs        # three-act demo CLI (fixture + live)
 │   ├── jev.rs         # Jev adapter
 │   ├── model.rs       # typed boundary objects
-│   └── r2r.rs         # deterministic demo transition chain
+│   ├── r2r.rs         # deterministic demo governance kernel
+│   └── bin/
+│       └── compare.rs # stateless vs stateful experiment
 ├── demo/
 │   └── fixtures/      # offline judgments
+├── experiments/
+│   └── stateless-vs-stateful/
 ├── docs/
 │   ├── architecture.md
 │   └── why-r2r-after-jev.md
@@ -215,6 +240,13 @@ semantics -> relation transition**, not `score -> permission`.
 
 See [`experiments/stateless-vs-stateful/README.md`](experiments/stateless-vs-stateful/README.md)
 for what this experiment can and cannot establish.
+
+## Non-affiliation
+
+This is an independent project. It is not affiliated with, endorsed by, or
+sponsored by TypeSafe AI. "Jev", "TypeSafe", and "System One" are used only
+to describe the public API this integration targets, and remain the property
+of their respective owners.
 
 ## License
 

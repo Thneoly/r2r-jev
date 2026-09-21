@@ -55,9 +55,7 @@ impl Metrics {
 }
 
 fn threshold_decision(beyond_scope: u32, destructive: u32) -> Decision {
-    if beyond_scope >= BEYOND_SCOPE_THRESHOLD_PPM
-        || destructive >= DESTRUCTIVE_THRESHOLD_PPM
-    {
+    if beyond_scope >= BEYOND_SCOPE_THRESHOLD_PPM || destructive >= DESTRUCTIVE_THRESHOLD_PPM {
         Decision::Deny
     } else {
         Decision::Allow
