@@ -284,4 +284,4 @@ of their respective owners.
 
 ## License
 
-No open-source license has been selected yet. Until a license is added, normal copyright rules apply. This is intentional so the repository owner can make that legal choice explicitly.
+Licensed under the [Apache License, Version 2.0](LICENSE).
