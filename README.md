@@ -191,6 +191,31 @@ probabilistic judgment -> evidence -> persistent relation state
 
 Early public demo. The fixture path is the reproducible reference path; the live Jev adapter is deliberately thin and isolated from deterministic governance semantics.
 
+## Experiment: stateless gate vs stateful governance
+
+The repository includes a deliberately small comparison that feeds the same
+judgment stream to two arms:
+
+```text
+A. judgment -> threshold -> current-call decision
+B. judgment -> evidence -> persistent governance state -> future decisions
+```
+
+Run:
+
+```bash
+cargo run --bin compare -- experiments/stateless-vs-stateful/persistent-policy.csv
+cargo run --bin compare -- experiments/stateless-vs-stateful/false-positive.csv
+```
+
+The second scenario is intentionally adversarial to persistent state: it shows
+that a false positive can have a larger temporal blast radius when evidence is
+persisted. This is why the intended design is **judgment -> evidence -> admission
+semantics -> relation transition**, not `score -> permission`.
+
+See [`experiments/stateless-vs-stateful/README.md`](experiments/stateless-vs-stateful/README.md)
+for what this experiment can and cannot establish.
+
 ## License
 
 No open-source license has been selected yet. Until a license is added, normal copyright rules apply. This is intentional so the repository owner can make that legal choice explicitly.

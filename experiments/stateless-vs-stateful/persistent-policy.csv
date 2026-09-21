@@ -1,0 +1,10 @@
+step,kind,beyond_scope_ppm,destructive_ppm,expected,notes
+1,tool_call,120000,100000,ALLOW,normal in-scope action
+2,tool_call,940000,720000,DENY,high-confidence out-of-scope action
+3,tool_call,420000,300000,DENY,current judgment is below threshold but prior suspension should persist
+4,human_override,0,0,-,human explicitly restores authority
+5,tool_call,280000,220000,ALLOW,normal action after override
+6,review_failure,0,0,-,external governance event suspends authorization
+7,tool_call,310000,250000,DENY,low-risk current call still occurs while authorization is suspended
+8,human_override,0,0,-,human restores authority again
+9,tool_call,180000,160000,ALLOW,normal action after repair

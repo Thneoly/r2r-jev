@@ -1,0 +1,7 @@
+step,kind,beyond_scope_ppm,destructive_ppm,expected,notes
+1,tool_call,100000,80000,ALLOW,normal action
+2,tool_call,930000,200000,DENY,judge flags the current call; both arms block it
+3,tool_call,180000,120000,ALLOW,the next call is benign and the previous flag was a false positive
+4,tool_call,210000,140000,ALLOW,another benign call
+5,human_override,0,0,-,human clears persistent state
+6,tool_call,160000,100000,ALLOW,normal action after repair
