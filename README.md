@@ -188,6 +188,30 @@ A. Judgment -> threshold -> allow / deny
 B. Judgment -> evidence -> relation state -> future governance
 ```
 
+## Why not just X?
+
+Neighboring projects answer different questions:
+
+- **Context pruning (winnow, yoshi, lcc, fast-jev-compaction)** — Jev judges
+  which text is still needed, and the payoff is tokens: "nothing is lost, it
+  just stops costing them." Here the payoff is authority: a judgment changes
+  long-lived relations that govern future calls, whether or not anything is
+  being pruned.
+- **Call/decision caches (jevcache and the caches inside lcc/yoshi)** — a
+  cache avoids re-asking the same question; the agent's standing is the same
+  before and after a hit. Here the judgment's *effect* is the point: evidence
+  is admitted once, and the relation state it produced keeps deciding later
+  calls.
+- **Memory layers (agent-beacon)** — record what happened across sessions and
+  serve it back: remembering without judging. This repository is the other
+  half of that sentence — it starts from a typed judgment and asks which
+  governance relations that evidence should change.
+- **Policy engines (OPA, Cedar, OpenFGA)** — evaluate authorization queries
+  against rules someone authored. The question here is one step earlier and
+  narrower: when a probabilistic judgment arrives, which relation transitions
+  does it justify, under what admission semantics, and with what provenance —
+  so that a wrong judgment cannot silently become a permission.
+
 ## Repository layout
 
 ```text
