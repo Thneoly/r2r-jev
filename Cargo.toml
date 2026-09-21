@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 description = "Jev judgments as evidence for persistent R2R governance state"
 repository = "https://github.com/Thneoly/r2r-jev"
+license = "Apache-2.0"
 default-run = "r2r-jev"
 
 [dependencies]
