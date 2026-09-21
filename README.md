@@ -33,6 +33,8 @@ Jev result != permission
 
 A Jev score becomes a `JudgmentObserved` event. R2R then applies deterministic transition semantics to decide whether that evidence is strong enough to change Trust, Delegation, Authorization, Supervision, or other relations.
 
+![Three-act demo](docs/demo.gif)
+
 ## Why this exists
 
 Most agent guardrails answer a local question:
@@ -93,6 +95,12 @@ Provenance
 
 Ids are sequential and deterministic: no clocks, no randomness. The same
 event sequence always produces the same output, byte for byte.
+
+The GIF above is regenerated from the demo output itself:
+
+```bash
+python scripts/make_demo_gif.py   # requires Pillow
+```
 
 ## Live Jev
 
@@ -193,6 +201,8 @@ B. Judgment -> evidence -> relation state -> future governance
 │       └── compare.rs # stateless vs stateful experiment
 ├── demo/
 │   └── fixtures/      # offline judgments
+├── scripts/
+│   └── make_demo_gif.py
 ├── experiments/
 │   └── stateless-vs-stateful/
 ├── docs/
