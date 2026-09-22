@@ -167,6 +167,14 @@ Specification: [`docs/evidence-admission-semantics-v0.1.md`](docs/evidence-admis
 
 Experiment protocol: [`experiments/evidence-admission-v0.1/README.md`](experiments/evidence-admission-v0.1/README.md)
 
+Experiment results (four traces, direct-threshold baseline vs admission): see the
+"Results" section of the protocol — the uncertain-band false-deny blast radius
+drops to zero, corroborated enforcement fires earlier than the fixed threshold,
+and the strong-trusted false-positive band is honestly unchanged.
+
+Open research questions — including the eight problems admission v0.1 does not
+solve — live on the [Discussions board](https://github.com/Thneoly/r2r-jev/discussions/1).
+
 ## Live Jev
 
 Set a TypeSafe API key:
