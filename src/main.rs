@@ -1,7 +1,9 @@
+mod admission;
 mod jev;
 mod model;
 mod r2r;
 
+use admission::AdmissionContext;
 use model::{ppm_to_display, JudgmentObserved};
 use r2r::{Admission, Governance};
 
@@ -25,20 +27,21 @@ fn run() -> Result<(), String> {
     }
 }
 
-/// The full three-act demo, driven by the recorded fixture plus a benign
-/// follow-up call: judgment -> evidence -> persistent state -> repair.
+/// Full three-act demo:
+/// judgment -> typed evidence -> Admission v0.1 -> R2R -> persistent state -> repair.
 fn run_fixture_demo() -> Result<(), String> {
     let mut governance = Governance::new();
 
-    // Act 1: the judgment itself.
+    // Act 1: one strong signal is admitted; the second is held.
     let risky = load_fixture_judgment()?;
-    let admission = governance.observe_judgment(&risky);
-    println!("Act 1: a judgment becomes evidence, not permission");
-    print_judgment(&risky, &admission);
-    print_changes(&admission);
-    print_decision(&admission);
+    let outcome = governance.observe_judgment(&risky, AdmissionContext::demo(1));
+    println!("Act 1: admission separates evidence from authority");
+    print_judgment(&risky, &outcome);
+    print_changes(&outcome);
+    print_decision(&outcome);
 
-    // Act 2: a later, low-scoring call inherits the history.
+    // Act 2: a later, low-scoring call produces no admitted evidence, but the
+    // authorization state created by Act 1 still governs the call.
     let benign = JudgmentObserved::from_probabilities(
         "fixture:jev-style",
         "coder",
@@ -49,27 +52,27 @@ fn run_fixture_demo() -> Result<(), String> {
         0.18,
         0.12,
     );
-    let admission = governance.observe_judgment(&benign);
+    let outcome = governance.observe_judgment(&benign, AdmissionContext::demo(2));
     println!();
-    println!("Act 2: the next call inherits history");
-    print_judgment(&benign, &admission);
-    if admission.relation_changes.is_empty() {
-        println!("  Relations         unchanged (a stateless gate would ALLOW this call)");
+    println!("Act 2: rejected evidence does not erase persistent governance state");
+    print_judgment(&benign, &outcome);
+    if outcome.relation_changes.is_empty() {
+        println!("  Relations         unchanged (no new evidence was admitted)");
     } else {
-        print_changes(&admission);
+        print_changes(&outcome);
     }
-    print_decision(&admission);
+    print_decision(&outcome);
 
     // Act 3: a human repairs the relation; the repair is supervised.
-    let admission = governance.human_override("human-1", "merge_pull_request");
+    let outcome = governance.human_override("human-1", "merge_pull_request");
     println!();
     println!("Act 3: human override repairs the relation, under supervision");
     println!(
         "  GovernanceEvent   event={} kind=human_override supervisor=human-1",
-        admission.event_id
+        outcome.event_id
     );
-    print_changes(&admission);
-    print_decision(&admission);
+    print_changes(&outcome);
+    print_decision(&outcome);
 
     println!();
     println!("Provenance");
@@ -80,13 +83,16 @@ fn run_fixture_demo() -> Result<(), String> {
     Ok(())
 }
 
-/// Live mode covers a single judgment (Act 1) against the real Jev API.
+/// Live mode covers a single judgment against the real Jev API, but still
+/// routes it through the same deterministic Admission v0.1 boundary.
 fn run_live(args: &mut impl Iterator<Item = String>) -> Result<(), String> {
     let mut task = "Fix the login redirect bug".to_string();
     let mut tool = "merge_pull_request".to_string();
     let mut scope = "repo-alpha".to_string();
     let mut intent = "Merge a pull request containing unrelated repository changes".to_string();
     let mut subject = "coder".to_string();
+    let mut source_reliability_ppm: u32 = 850_000;
+    let mut corroborators: u8 = 0;
 
     while let Some(flag) = args.next() {
         let value = args
@@ -98,6 +104,19 @@ fn run_live(args: &mut impl Iterator<Item = String>) -> Result<(), String> {
             "--scope" => scope = value,
             "--intent" => intent = value,
             "--subject" => subject = value,
+            "--source-reliability-ppm" => {
+                source_reliability_ppm = value
+                    .parse::<u32>()
+                    .map_err(|_| "--source-reliability-ppm must be an integer".to_string())?;
+                if source_reliability_ppm > 1_000_000 {
+                    return Err("--source-reliability-ppm must be <= 1000000".to_string());
+                }
+            }
+            "--corroborators" => {
+                corroborators = value
+                    .parse::<u8>()
+                    .map_err(|_| "--corroborators must be an integer 0..255".to_string())?;
+            }
             _ => return Err(format!("unknown argument: {flag}")),
         }
     }
@@ -106,11 +125,19 @@ fn run_live(args: &mut impl Iterator<Item = String>) -> Result<(), String> {
         .map_err(|_| "TYPESAFE_API_KEY is required for live mode".to_string())?;
     let judgment = jev::judge_live(&api_key, &subject, &scope, &task, &tool, &intent)?;
 
+    // This is configured trust metadata, not a probability returned by Jev and
+    // not a claim about measured model accuracy.
+    let context = AdmissionContext::new(source_reliability_ppm, corroborators, 1, 11);
+
     let mut governance = Governance::new();
-    let admission = governance.observe_judgment(&judgment);
-    print_judgment(&judgment, &admission);
-    print_changes(&admission);
-    print_decision(&admission);
+    let outcome = governance.observe_judgment(&judgment, context);
+    println!(
+        "Admission context source_reliability_ppm={} corroborators={} (caller-configured)",
+        source_reliability_ppm, corroborators
+    );
+    print_judgment(&judgment, &outcome);
+    print_changes(&outcome);
+    print_decision(&outcome);
     Ok(())
 }
 
@@ -145,10 +172,10 @@ fn load_fixture_judgment() -> Result<JudgmentObserved, String> {
     ))
 }
 
-fn print_judgment(judgment: &JudgmentObserved, admission: &Admission) {
+fn print_judgment(judgment: &JudgmentObserved, outcome: &Admission) {
     println!(
         "  JudgmentObserved  event={} provider={}",
-        admission.event_id, judgment.provider
+        outcome.event_id, judgment.provider
     );
     println!(
         "  judgment          beyond_scope={} destructive={} tool={}",
@@ -156,13 +183,23 @@ fn print_judgment(judgment: &JudgmentObserved, admission: &Admission) {
         ppm_to_display(judgment.destructive_ppm),
         judgment.tool
     );
-    if let Some(evidence_id) = &admission.evidence_id {
-        println!("  Evidence          {evidence_id} created");
+    for evidence in &outcome.evidence {
+        println!(
+            "  Evidence          {} kind={} confidence={}",
+            evidence.id,
+            evidence.kind.as_str(),
+            ppm_to_display(evidence.confidence_ppm)
+        );
+        println!(
+            "  Admission         policy={} {}",
+            evidence.policy_version,
+            evidence.decision.render()
+        );
     }
 }
 
-fn print_changes(admission: &Admission) {
-    for change in &admission.relation_changes {
+fn print_changes(outcome: &Admission) {
+    for change in &outcome.relation_changes {
         println!(
             "  {:<17} {:<29} {} (caused by {})",
             change.relation, change.transition, change.id, change.caused_by
@@ -170,11 +207,11 @@ fn print_changes(admission: &Admission) {
     }
 }
 
-fn print_decision(admission: &Admission) {
+fn print_decision(outcome: &Admission) {
     println!(
         "  Decision          {} {} ({})",
-        admission.decision.as_str(),
-        admission.action,
-        admission.reason
+        outcome.decision.as_str(),
+        outcome.action,
+        outcome.reason
     );
 }
