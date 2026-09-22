@@ -1,7 +1,7 @@
+use crate::admission::{
+    admit, AdmissionContext, AdmissionDecision, EvidenceKind, POLICY_VERSION,
+};
 use crate::model::JudgmentObserved;
-
-const BEYOND_SCOPE_THRESHOLD_PPM: u32 = 850_000;
-const DESTRUCTIVE_THRESHOLD_PPM: u32 = 900_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrustPhase {
@@ -61,11 +61,20 @@ impl Decision {
     }
 }
 
-/// One admitted governance event and everything it changed.
+#[derive(Debug)]
+pub struct EvidenceAdmissionRecord {
+    pub id: String,
+    pub kind: EvidenceKind,
+    pub confidence_ppm: u32,
+    pub decision: AdmissionDecision,
+    pub policy_version: &'static str,
+}
+
+/// One governance event and everything it changed after evidence admission.
 #[derive(Debug)]
 pub struct Admission {
     pub event_id: String,
-    pub evidence_id: Option<String>,
+    pub evidence: Vec<EvidenceAdmissionRecord>,
     pub reason: &'static str,
     pub relation_changes: Vec<RelationChange>,
     pub decision: Decision,
@@ -147,12 +156,11 @@ impl Counters {
     }
 }
 
-/// Minimal demo governance kernel: integer judgments in, admitted relation
-/// transitions and a causal provenance chain out.
+/// Minimal demo governance kernel.
 ///
-/// This is intentionally not the full R2R runtime; it exists to make the
-/// boundary "judgment -> evidence -> relation state -> future decisions"
-/// runnable and inspectable.
+/// Probabilistic judgments do not mutate relation state. Each typed evidence
+/// candidate first passes Evidence Admission v0.1. Only `Accept` becomes a
+/// governance-active input to the deterministic demo R2R rule pack.
 pub struct Governance {
     state: GovernanceState,
     counters: Counters,
@@ -175,48 +183,57 @@ impl Governance {
         &self.provenance
     }
 
-    /// Admit a judgment as evidence and let it act on persistent relations.
-    pub fn observe_judgment(&mut self, judgment: &JudgmentObserved) -> Admission {
+    /// Observe a probabilistic judgment, turn it into typed evidence candidates,
+    /// run Admission v0.1, then let only accepted evidence reach R2R rules.
+    pub fn observe_judgment(
+        &mut self,
+        judgment: &JudgmentObserved,
+        context: AdmissionContext,
+    ) -> Admission {
         let event_id = self.counters.next("event");
-        let evidence_id = self.counters.next("evidence");
+        let candidates = [
+            (EvidenceKind::BeyondScope, judgment.beyond_scope_ppm),
+            (EvidenceKind::DestructiveAction, judgment.destructive_ppm),
+        ];
 
-        let risky = judgment.beyond_scope_ppm >= BEYOND_SCOPE_THRESHOLD_PPM
-            || judgment.destructive_ppm >= DESTRUCTIVE_THRESHOLD_PPM;
+        let mut evidence = Vec::with_capacity(candidates.len());
+        let mut all_changes = Vec::new();
+        let mut accepted_any = false;
 
-        let mut changes = Vec::new();
-        if risky {
-            if self.state.trust != TrustPhase::Warning {
-                self.state.trust = TrustPhase::Warning;
-                changes.push(RelationChange::new(
-                    &mut self.counters,
-                    "trust",
-                    "Trust",
-                    "Active -> Warning",
-                    &evidence_id,
-                ));
+        for (kind, confidence_ppm) in candidates {
+            let evidence_id = self.counters.next("evidence");
+            let admission_decision = admit(kind, confidence_ppm, context);
+            let mut local_changes = Vec::new();
+
+            if admission_decision.is_accepted() {
+                accepted_any = true;
+                local_changes = self.apply_admitted_evidence(&evidence_id, kind);
+                all_changes.extend(local_changes.iter().map(|change| RelationChange {
+                    id: change.id.clone(),
+                    relation: change.relation,
+                    transition: change.transition.clone(),
+                    caused_by: change.caused_by.clone(),
+                }));
             }
-            if self.state.delegation != DelegationPhase::Degraded {
-                self.state.delegation = DelegationPhase::Degraded;
-                changes.push(RelationChange::new(
-                    &mut self.counters,
-                    "delegation",
-                    "Delegation",
-                    "Active -> Degraded",
-                    &evidence_id,
-                ));
+
+            let mut line = format!(
+                "{event_id} -> {evidence_id}[{}:{}]",
+                kind.as_str(),
+                admission_decision.render()
+            );
+            for change in &local_changes {
+                line.push_str(" -> ");
+                line.push_str(&change.id);
             }
-            if self.state.authorization != AuthorizationPhase::Suspended {
-                self.state.authorization = AuthorizationPhase::Suspended;
-                let change = RelationChange::new(
-                    &mut self.counters,
-                    "authorization",
-                    "Authorization",
-                    "Active -> Suspended",
-                    &evidence_id,
-                );
-                self.governing_authorization = Some(change.id.clone());
-                changes.push(change);
-            }
+            self.provenance.push(line);
+
+            evidence.push(EvidenceAdmissionRecord {
+                id: evidence_id,
+                kind,
+                confidence_ppm,
+                decision: admission_decision,
+                policy_version: POLICY_VERSION,
+            });
         }
 
         let decision = if self.state.authorization == AuthorizationPhase::Active {
@@ -225,38 +242,79 @@ impl Governance {
             Decision::Deny
         };
 
-        let reason = if risky {
-            "threshold-crossing judgment admitted as evidence"
+        let reason = if accepted_any && !all_changes.is_empty() {
+            "accepted evidence changed persistent governance state"
+        } else if accepted_any && self.state.authorization == AuthorizationPhase::Suspended {
+            "evidence admitted; authorization remains suspended"
         } else if self.state.authorization == AuthorizationPhase::Suspended {
-            "authorization remains suspended by earlier evidence"
+            "no evidence admitted; authorization remains suspended by earlier evidence"
         } else {
-            "judgment below threshold"
+            "no evidence admitted; authorization remains active"
         };
 
-        let mut line = format!("{event_id} -> {evidence_id}");
-        for change in &changes {
-            line.push_str(" -> ");
-            line.push_str(&change.id);
+        let mut decision_line = event_id.clone();
+        if let Some(governing) = &self.governing_authorization {
+            decision_line.push_str(&format!(" [via {governing}]"));
         }
-        if decision == Decision::Deny {
-            if let Some(governing) = &self.governing_authorization {
-                let already_listed = changes.iter().any(|change| &change.id == governing);
-                if !already_listed {
-                    line.push_str(&format!(" [via {governing}]"));
-                }
-            }
-            line.push_str(&format!(" -> DENY({})", judgment.tool));
-        }
-        self.provenance.push(line);
+        decision_line.push_str(&format!(" -> {}({})", decision.as_str(), judgment.tool));
+        self.provenance.push(decision_line);
 
         Admission {
             event_id,
-            evidence_id: Some(evidence_id),
+            evidence,
             reason,
-            relation_changes: changes,
+            relation_changes: all_changes,
             decision,
             action: judgment.tool.clone(),
         }
+    }
+
+    /// The demo R2R rule pack. Admission answers whether evidence may enter
+    /// governance; this method answers how accepted evidence affects the current
+    /// Relation Graph. v0.1 maps accepted BeyondScope/DestructiveAction evidence
+    /// to the same protective chain for demonstration purposes.
+    fn apply_admitted_evidence(
+        &mut self,
+        evidence_id: &str,
+        kind: EvidenceKind,
+    ) -> Vec<RelationChange> {
+        debug_assert!(kind.is_supported());
+        let mut changes = Vec::new();
+
+        if self.state.trust != TrustPhase::Warning {
+            self.state.trust = TrustPhase::Warning;
+            changes.push(RelationChange::new(
+                &mut self.counters,
+                "trust",
+                "Trust",
+                "Active -> Warning",
+                evidence_id,
+            ));
+        }
+        if self.state.delegation != DelegationPhase::Degraded {
+            self.state.delegation = DelegationPhase::Degraded;
+            changes.push(RelationChange::new(
+                &mut self.counters,
+                "delegation",
+                "Delegation",
+                "Active -> Degraded",
+                evidence_id,
+            ));
+        }
+        if self.state.authorization != AuthorizationPhase::Suspended {
+            self.state.authorization = AuthorizationPhase::Suspended;
+            let change = RelationChange::new(
+                &mut self.counters,
+                "authorization",
+                "Authorization",
+                "Active -> Suspended",
+                evidence_id,
+            );
+            self.governing_authorization = Some(change.id.clone());
+            changes.push(change);
+        }
+
+        changes
     }
 
     /// A human repairs the suspended authorization; the repair is itself
@@ -303,7 +361,7 @@ impl Governance {
 
         Admission {
             event_id,
-            evidence_id: None,
+            evidence: Vec::new(),
             reason: "human override restores authorization under supervision",
             relation_changes: changes,
             decision: Decision::Allow,
@@ -315,6 +373,7 @@ impl Governance {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::admission::{AdmissionClass, HoldReason, RejectReason};
 
     fn judgment(beyond_scope: f64, destructive: f64, tool: &str) -> JudgmentObserved {
         JudgmentObserved::from_probabilities(
@@ -330,73 +389,158 @@ mod tests {
     }
 
     #[test]
-    fn act1_risky_judgment_suspends_and_denies() {
+    fn act1_admission_precedes_relation_transition() {
         let mut governance = Governance::new();
-        let admission = governance.observe_judgment(&judgment(0.94, 0.72, "merge_pull_request"));
+        let outcome = governance.observe_judgment(
+            &judgment(0.94, 0.72, "merge_pull_request"),
+            AdmissionContext::demo(1),
+        );
 
-        assert_eq!(admission.decision, Decision::Deny);
+        assert_eq!(
+            outcome.evidence[0].decision,
+            AdmissionDecision::Accept(AdmissionClass::Strong)
+        );
+        assert_eq!(
+            outcome.evidence[1].decision,
+            AdmissionDecision::Hold(HoldReason::NeedsCorroborationOrReview)
+        );
+        assert_eq!(outcome.decision, Decision::Deny);
         assert_eq!(governance.state.trust, TrustPhase::Warning);
         assert_eq!(governance.state.delegation, DelegationPhase::Degraded);
         assert_eq!(
             governance.state.authorization,
             AuthorizationPhase::Suspended
         );
-        assert_eq!(admission.relation_changes.len(), 3);
+        assert_eq!(outcome.relation_changes.len(), 3);
     }
 
     #[test]
-    fn act2_benign_call_inherits_suspension() {
+    fn act2_low_signals_are_rejected_but_prior_suspension_persists() {
         let mut governance = Governance::new();
-        governance.observe_judgment(&judgment(0.94, 0.72, "merge_pull_request"));
+        governance.observe_judgment(
+            &judgment(0.94, 0.72, "merge_pull_request"),
+            AdmissionContext::demo(1),
+        );
 
-        // A later, low-scoring call is still denied: history persists.
-        let admission = governance.observe_judgment(&judgment(0.18, 0.12, "read_file"));
+        let outcome = governance.observe_judgment(
+            &judgment(0.18, 0.12, "read_file"),
+            AdmissionContext::demo(2),
+        );
 
-        assert_eq!(admission.decision, Decision::Deny);
+        assert!(outcome.evidence.iter().all(|record| matches!(
+            record.decision,
+            AdmissionDecision::Reject(RejectReason::InsufficientSupport)
+        )));
+        assert_eq!(outcome.decision, Decision::Deny);
         assert_eq!(
             governance.state.authorization,
             AuthorizationPhase::Suspended
         );
-        assert!(admission.relation_changes.is_empty());
+        assert!(outcome.relation_changes.is_empty());
+    }
+
+    #[test]
+    fn high_confidence_from_low_reliability_source_does_not_mutate_relations() {
+        let mut governance = Governance::new();
+        let context = AdmissionContext::new(400_000, 0, 1, 11);
+        let outcome = governance.observe_judgment(
+            &judgment(0.99, 0.99, "merge_pull_request"),
+            context,
+        );
+
+        assert!(outcome.evidence.iter().all(|record| matches!(
+            record.decision,
+            AdmissionDecision::Reject(RejectReason::SourceBelowTrustFloor)
+        )));
+        assert_eq!(outcome.decision, Decision::Allow);
+        assert_eq!(governance.state.authorization, AuthorizationPhase::Active);
+        assert!(outcome.relation_changes.is_empty());
+    }
+
+    #[test]
+    fn medium_single_source_judgments_hold_without_mutation() {
+        let mut governance = Governance::new();
+        let context = AdmissionContext::new(800_000, 0, 1, 11);
+        let outcome = governance.observe_judgment(
+            &judgment(0.76, 0.76, "merge_pull_request"),
+            context,
+        );
+
+        assert!(outcome.evidence.iter().all(|record| matches!(
+            record.decision,
+            AdmissionDecision::Hold(HoldReason::NeedsCorroborationOrReview)
+        )));
+        assert_eq!(outcome.decision, Decision::Allow);
+        assert!(outcome.relation_changes.is_empty());
+    }
+
+    #[test]
+    fn corroborated_medium_evidence_can_enter_r2r() {
+        let mut governance = Governance::new();
+        let context = AdmissionContext::new(800_000, 2, 1, 11);
+        let outcome = governance.observe_judgment(
+            &judgment(0.76, 0.20, "merge_pull_request"),
+            context,
+        );
+
+        assert_eq!(
+            outcome.evidence[0].decision,
+            AdmissionDecision::Accept(AdmissionClass::Corroborated)
+        );
+        assert_eq!(outcome.decision, Decision::Deny);
+        assert_eq!(governance.state.authorization, AuthorizationPhase::Suspended);
     }
 
     #[test]
     fn act3_override_restores_under_supervision() {
         let mut governance = Governance::new();
-        governance.observe_judgment(&judgment(0.94, 0.72, "merge_pull_request"));
+        governance.observe_judgment(
+            &judgment(0.94, 0.72, "merge_pull_request"),
+            AdmissionContext::demo(1),
+        );
 
-        let admission = governance.human_override("human-1", "merge_pull_request");
+        let outcome = governance.human_override("human-1", "merge_pull_request");
 
-        assert_eq!(admission.decision, Decision::Allow);
+        assert_eq!(outcome.decision, Decision::Allow);
         assert_eq!(governance.state.authorization, AuthorizationPhase::Active);
         let supervision = governance.state.supervision.as_ref().expect("supervision");
         assert_eq!(supervision.supervisor, "human-1");
-        assert_eq!(supervision.created_by, admission.event_id);
+        assert_eq!(supervision.created_by, outcome.event_id);
     }
 
     #[test]
     fn benign_judgment_on_fresh_state_allows() {
         let mut governance = Governance::new();
-        let admission = governance.observe_judgment(&judgment(0.20, 0.10, "read_file"));
+        let outcome = governance.observe_judgment(
+            &judgment(0.20, 0.10, "read_file"),
+            AdmissionContext::demo(1),
+        );
 
-        assert_eq!(admission.decision, Decision::Allow);
+        assert_eq!(outcome.decision, Decision::Allow);
         assert_eq!(governance.state.authorization, AuthorizationPhase::Active);
+        assert!(outcome.relation_changes.is_empty());
     }
 
     #[test]
     fn provenance_is_deterministic() {
         let run = || {
             let mut governance = Governance::new();
-            governance.observe_judgment(&judgment(0.94, 0.72, "merge_pull_request"));
-            governance.observe_judgment(&judgment(0.18, 0.12, "read_file"));
+            governance.observe_judgment(
+                &judgment(0.94, 0.72, "merge_pull_request"),
+                AdmissionContext::demo(1),
+            );
+            governance.observe_judgment(
+                &judgment(0.18, 0.12, "read_file"),
+                AdmissionContext::demo(2),
+            );
             governance.human_override("human-1", "merge_pull_request");
             governance.provenance().to_vec()
         };
 
         assert_eq!(run(), run());
-        assert_eq!(
-            run().first().map(String::as_str),
-            Some("ev-0001 -> evidence-0001 -> trust-0001 -> delegation-0001 -> authorization-0001 -> DENY(merge_pull_request)")
-        );
+        assert!(run()
+            .first()
+            .expect("first provenance line")
+            .contains("Accept(Strong)"));
     }
 }
