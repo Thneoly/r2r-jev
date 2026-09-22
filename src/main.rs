@@ -1,3 +1,6 @@
+// The demo binary exercises a subset of the admission module's public
+// surface; the reference-case and compare binaries exercise the rest.
+#[allow(dead_code)]
 mod admission;
 mod jev;
 mod model;

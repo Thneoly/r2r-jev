@@ -1,0 +1,6 @@
+step,incident,kind,confidence_ppm,reliability_ppm,corroborators,observed_vtick,expires_vtick,truth,note
+1,i1,beyond_scope,150000,850000,0,1,40,benign,normal action
+2,i2,beyond_scope,930000,850000,0,2,20,false_positive,strong trusted source wrong: both arms are expected to suspend
+3,i3,beyond_scope,160000,850000,0,3,40,benign,benign call inherits the wrong suspension
+4,-,repair,0,0,0,4,0,none,human repairs the relation
+5,i4,beyond_scope,170000,850000,0,5,40,benign,benign call after repair

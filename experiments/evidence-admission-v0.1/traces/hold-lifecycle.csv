@@ -1,0 +1,7 @@
+step,incident,kind,confidence_ppm,reliability_ppm,corroborators,observed_vtick,expires_vtick,truth,note
+1,h1,beyond_scope,760000,800000,0,1,20,violation,held: corroboration will never arrive
+2,h2,beyond_scope,750000,800000,0,2,50,violation,held: will be corroborated at step 3
+3,h2,beyond_scope,760000,800000,2,3,50,violation,corroborators arrive: h2 resolves to Accept
+4,h1,beyond_scope,770000,800000,0,25,45,violation,h1 re-observed past its original expiry: resolves as expired
+5,-,repair,0,0,0,26,0,none,human repairs the relation
+6,i6,beyond_scope,200000,850000,0,27,60,benign,benign call after repair

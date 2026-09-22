@@ -117,3 +117,47 @@ Use identical judgment traces and compare:
 - replay determinism.
 
 The expected result is not assumed. A policy that overuses `Hold` may delay necessary enforcement; a policy that overuses `Accept` may retain the false-positive blast radius of the direct-threshold baseline.
+
+## Results (2026-09-23)
+
+Four deterministic traces, both arms, run with `src/bin/admission-compare.rs`
+(12 tests lock these numbers; rerun with `cargo run --bin admission-compare --
+<trace.csv>`):
+
+| trace | metric | baseline | admission |
+|---|---|---|---|
+| uncertain-single-source | false-deny calls | **2** | **0** |
+| | effective repairs | 1 | 0 |
+| strong-trusted-false-positive | false-deny calls | 1 | 1 |
+| corroborated-violation | violation calls allowed | 3 | **1** |
+| hold-lifecycle | violation calls allowed | 4 | **2** |
+| | held resolution | n/a | 1 accept + 1 expired + 1 pending |
+
+Readings (EA-H1/H2 against these numbers):
+
+1. **EA-H1 supported in the uncertain band.** A 870k-confidence single-source
+   flag with no corroboration is Held instead of admitted: zero false-deny
+   calls, zero repairs, versus two false denials plus a human repair under
+   the direct threshold.
+2. **EA-H1 does not extend to the strong-trusted band.** A 930k confidence
+   flag from a high-reliability source is `Accept(Strong)`: both arms
+   suspend and both inherit one false denial. Admission v0.1 does not fix
+   this band — the mitigation there is source-reliability configuration,
+   not admission structure.
+3. **EA-H2 supported.** In the corroborated-violation and hold-lifecycle
+   traces the baseline never suspends below its 850k threshold while
+   violations accumulate (3 and 4 allowed); admission suspends at the
+   second, corroborated signal (1 and 2 allowed). Corroboration made
+   enforcement *earlier* than the fixed threshold, not later.
+4. **Hold resolved both ways.** One held signal resolved by corroboration
+   (Accept), one by expiry, one remained pending at trace end — the third
+   state is not a leak, it has explicit exits.
+5. **Provenance depth** per event: baseline 2 links, admission 4-5 links
+   (event -> evidence -> admission -> decision [+ authorization]).
+
+These are constructed traces with a fixed policy version; they demonstrate
+mechanism behavior, not field performance. What they do establish on the
+protocol's own terms: the temporal blast radius of uncertain single-source
+judgments went to zero without losing (in fact improving) corroborated
+enforcement in the sub-threshold band, and the honest limit — the
+strong-trusted false positive — is preserved in plain sight.

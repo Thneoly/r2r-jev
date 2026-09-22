@@ -1,0 +1,8 @@
+step,incident,kind,confidence_ppm,reliability_ppm,corroborators,observed_vtick,expires_vtick,truth,note
+1,v1,beyond_scope,760000,800000,0,1,30,violation,first signal of a real violation: medium confidence single source
+2,v1,beyond_scope,770000,800000,2,2,30,violation,two independent corroborators arrive for the same incident
+3,v1,beyond_scope,780000,800000,2,3,30,violation,violation continues while unsuspended
+4,v1,beyond_scope,940000,850000,2,4,30,violation,strong confirmation
+5,i9,beyond_scope,200000,850000,0,5,40,benign,benign call while authorization is legitimately suspended
+6,-,repair,0,0,0,6,0,none,human repairs the relation
+7,i10,beyond_scope,180000,850000,0,7,40,benign,benign call after repair

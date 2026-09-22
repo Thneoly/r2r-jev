@@ -1,6 +1,4 @@
-use crate::admission::{
-    admit, AdmissionContext, AdmissionDecision, EvidenceKind, POLICY_VERSION,
-};
+use crate::admission::{admit, AdmissionContext, AdmissionDecision, EvidenceKind, POLICY_VERSION};
 use crate::model::JudgmentObserved;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -443,10 +441,8 @@ mod tests {
     fn high_confidence_from_low_reliability_source_does_not_mutate_relations() {
         let mut governance = Governance::new();
         let context = AdmissionContext::new(400_000, 0, 1, 11);
-        let outcome = governance.observe_judgment(
-            &judgment(0.99, 0.99, "merge_pull_request"),
-            context,
-        );
+        let outcome =
+            governance.observe_judgment(&judgment(0.99, 0.99, "merge_pull_request"), context);
 
         assert!(outcome.evidence.iter().all(|record| matches!(
             record.decision,
@@ -461,10 +457,8 @@ mod tests {
     fn medium_single_source_judgments_hold_without_mutation() {
         let mut governance = Governance::new();
         let context = AdmissionContext::new(800_000, 0, 1, 11);
-        let outcome = governance.observe_judgment(
-            &judgment(0.76, 0.76, "merge_pull_request"),
-            context,
-        );
+        let outcome =
+            governance.observe_judgment(&judgment(0.76, 0.76, "merge_pull_request"), context);
 
         assert!(outcome.evidence.iter().all(|record| matches!(
             record.decision,
@@ -478,17 +472,18 @@ mod tests {
     fn corroborated_medium_evidence_can_enter_r2r() {
         let mut governance = Governance::new();
         let context = AdmissionContext::new(800_000, 2, 1, 11);
-        let outcome = governance.observe_judgment(
-            &judgment(0.76, 0.20, "merge_pull_request"),
-            context,
-        );
+        let outcome =
+            governance.observe_judgment(&judgment(0.76, 0.20, "merge_pull_request"), context);
 
         assert_eq!(
             outcome.evidence[0].decision,
             AdmissionDecision::Accept(AdmissionClass::Corroborated)
         );
         assert_eq!(outcome.decision, Decision::Deny);
-        assert_eq!(governance.state.authorization, AuthorizationPhase::Suspended);
+        assert_eq!(
+            governance.state.authorization,
+            AuthorizationPhase::Suspended
+        );
     }
 
     #[test]

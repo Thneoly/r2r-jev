@@ -1,11 +1,10 @@
 //! Executable examples for Evidence Admission Semantics v0.1.
 
 #[path = "../admission.rs"]
+#[allow(dead_code)]
 mod admission;
 
-use admission::{
-    admit, AdmissionContext, AdmissionDecision, EvidenceKind, POLICY_VERSION,
-};
+use admission::{admit, AdmissionContext, AdmissionDecision, EvidenceKind, POLICY_VERSION};
 
 struct Example {
     label: &'static str,

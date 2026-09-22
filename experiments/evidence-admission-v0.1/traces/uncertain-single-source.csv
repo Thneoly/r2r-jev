@@ -1,0 +1,7 @@
+step,incident,kind,confidence_ppm,reliability_ppm,corroborators,observed_vtick,expires_vtick,truth,note
+1,i1,beyond_scope,200000,850000,0,1,40,benign,normal in-scope action
+2,i2,beyond_scope,870000,750000,0,2,20,false_positive,uncertain single-source flag: above baseline threshold but below admission Strong band with no corroboration
+3,i3,beyond_scope,180000,850000,0,3,40,benign,benign call after the flag
+4,i4,beyond_scope,250000,850000,0,4,40,benign,another benign call
+5,-,repair,0,0,0,5,0,none,human repairs the relation
+6,i5,beyond_scope,150000,850000,0,6,40,benign,benign call after repair

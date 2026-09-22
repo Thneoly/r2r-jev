@@ -121,8 +121,14 @@ impl AdmissionContext {
         now_vtick: u64,
         expires_vtick: u64,
     ) -> Self {
-        assert!(source_reliability_ppm <= PPM, "source reliability out of range");
-        assert!(expires_vtick >= now_vtick, "expiry precedes observation time");
+        assert!(
+            source_reliability_ppm <= PPM,
+            "source reliability out of range"
+        );
+        assert!(
+            expires_vtick >= now_vtick,
+            "expiry precedes observation time"
+        );
         Self {
             source_reliability_ppm,
             independent_corroborators,
@@ -159,9 +165,7 @@ pub fn admit(
         return AdmissionDecision::Reject(RejectReason::SourceBelowTrustFloor);
     }
 
-    if confidence_ppm >= STRONG_CONFIDENCE
-        && context.source_reliability_ppm >= STRONG_RELIABILITY
-    {
+    if confidence_ppm >= STRONG_CONFIDENCE && context.source_reliability_ppm >= STRONG_RELIABILITY {
         return AdmissionDecision::Accept(AdmissionClass::Strong);
     }
 
@@ -186,7 +190,11 @@ mod tests {
     #[test]
     fn strong_trusted_signal_is_accepted() {
         assert_eq!(
-            admit(EvidenceKind::BeyondScope, 940_000, AdmissionContext::demo(10)),
+            admit(
+                EvidenceKind::BeyondScope,
+                940_000,
+                AdmissionContext::demo(10)
+            ),
             AdmissionDecision::Accept(AdmissionClass::Strong)
         );
     }
