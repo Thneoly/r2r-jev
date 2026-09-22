@@ -1,6 +1,6 @@
 # Architecture
 
-`r2r-jev` deliberately separates **probabilistic judgment** from **deterministic governance**.
+`r2r-jev` separates **probabilistic judgment**, **evidence admission**, **deterministic governance**, and **enforcement**.
 
 ## Core flow
 
@@ -10,13 +10,28 @@ Agent / environment state
         ▼
        Jev
         │
-        │ typed answer + probability
+        │ typed answers + probabilities
         ▼
 JudgmentObserved
         │
-        │ adapter boundary
         ▼
-Evidence Relation
+Typed evidence candidates
+        │
+        ▼
+┌───────────────────────────────┐
+│ Evidence Admission v0.1       │
+│                               │
+│ kind                          │
+│ confidence                    │
+│ source reliability            │
+│ corroboration                 │
+│ virtual-time expiry           │
+│                               │
+│ Reject / Hold / Accept        │
+└───────────────┬───────────────┘
+                │ Accept only
+                ▼
+EvidenceAdmitted
         │
         │ typed R -> R transitions
         ▼
@@ -29,9 +44,21 @@ Enforcement adapter (for example MCP)
 Real tool execution
 ```
 
-## Why the boundary matters
+The architectural invariant is:
 
-A Jev answer is not authoritative state. It is an observation with uncertainty.
+```text
+Judgment -> Evidence -> Admission -> R2R -> Enforcement
+```
+
+not:
+
+```text
+Judgment -> Permission
+```
+
+## Why Admission is a separate layer
+
+A Jev answer is an observation with uncertainty. It is not authoritative governance state.
 
 For example:
 
@@ -39,35 +66,103 @@ For example:
 beyond_scope = 0.94
 ```
 
-should not directly become:
+must not directly become:
 
 ```text
 Authorization = Suspended
 ```
 
-Instead it becomes evidence:
+Evidence Admission v0.1 first asks whether the observation is eligible to enter governance at all.
 
 ```text
-Jev judgment
-   ↓
-JudgmentObserved
-   ↓
-EvidenceRelation
-   ↓
-R2R admission / transition semantics
-   ↓
-Trust
-   ↓
-Delegation
-   ↓
-Authorization
+beyond_scope = 0.94
+        │
+        ▼
+EvidenceObserved
+        │
+        ├── kind = BeyondScope
+        ├── confidence = 940000 ppm
+        ├── source reliability = trusted runtime metadata
+        ├── corroborators = trusted provenance metadata
+        └── expiry = virtual-time metadata
+        │
+        ▼
+Admission
+        ├── Reject
+        ├── Hold
+        └── Accept
 ```
 
-This preserves a clear separation between:
+Only `Accept` emits governance-active evidence.
 
-- **Judge** — what seems true now;
-- **Govern** — what persistent state changes are admitted;
-- **Act** — what the system is allowed to execute.
+`Hold` is deliberately non-authoritative: it can wait for corroboration, review, contradiction, or expiry without mutating persistent relations.
+
+## Evidence Admission v0.1
+
+The executable policy is defined in [`src/admission.rs`](../src/admission.rs) and specified in [`docs/evidence-admission-semantics-v0.1.md`](evidence-admission-semantics-v0.1.md).
+
+The v0.1 decision order is:
+
+```text
+unsupported kind
+    -> Reject
+
+expired
+    -> Reject
+
+source reliability below floor
+    -> Reject
+
+strong confidence + strong source reliability
+    -> Accept(Strong)
+
+medium confidence + reliable source + >=2 independent corroborators
+    -> Accept(Corroborated)
+
+review-level confidence but insufficient support
+    -> Hold
+
+otherwise
+    -> Reject
+```
+
+The policy intentionally does **not** multiply probability and source reliability or claim a Bayesian interpretation. They are separate deterministic policy dimensions.
+
+Source reliability, corroboration identity/count, and expiry are bound by the trusted adapter/runtime. The probabilistic model cannot self-assert them.
+
+## Admission does not decide the Relation effect
+
+`Accept` emits an `EvidenceAdmitted` input. It still does not directly mutate authorization.
+
+The current public demo rule pack maps admitted `BeyondScope` or `DestructiveAction` evidence to this protective chain:
+
+```text
+EvidenceAdmitted
+        ↓
+Trust: Active -> Warning
+        ↓
+Delegation: Active -> Degraded
+        ↓
+Authorization: Active -> Suspended
+```
+
+That mapping belongs to R2R semantics, not to Jev and not to Admission.
+
+A different rule pack could react to the same admitted evidence by creating supervision, narrowing scope, or requesting review instead of suspending authorization.
+
+Formally:
+
+```text
+Admission(e) != AuthorizationDecision(e)
+```
+
+and:
+
+```text
+EvidenceAdmitted(e) + RelationGraph(t)
+    -> R2R rules
+    -> RelationGraph(t+1)
+```
 
 ## Deterministic boundary
 
@@ -77,45 +172,82 @@ The live Jev API returns floating-point probabilities. The adapter converts them
 0.94 -> 940000
 ```
 
-The demo governance kernel then uses only integer state and explicit thresholds.
+From that boundary onward, the demo uses integer values, explicit virtual ticks, versioned admission semantics, deterministic ids, and explicit relation transitions.
 
-This is a small demonstration of a broader R2R principle:
+The same evidence envelope + admission policy version + virtual tick produces the same admission result.
 
-> Probabilistic systems may provide evidence and proposals, while governance state transitions remain explicit, replayable, and inspectable.
+## Current three-act demo
 
-## Current demo semantics
-
-The public demo intentionally uses a small transition chain, played out in
-three acts over a persistent state:
+The fixture demo now runs through Admission v0.1.
 
 ```text
-Act 1  BeyondScopeEvidence
-          ↓ weakens
-       Trust: Active -> Warning
-          ↓ degrades
-       Delegation: Active -> Degraded
-          ↓ constrains
-       Authorization: Active -> Suspended      -> DENY current call
+Act 1
+  Jev-style judgment:
+    BeyondScope = 0.94
+    Destructive = 0.72
 
-Act 2  A later, below-threshold judgment is still admitted as evidence,
-       but the decision inherits the suspended authorization
-       -> DENY a call a stateless gate would ALLOW
+  Admission:
+    BeyondScope       -> Accept(Strong)
+    DestructiveAction -> Hold(NeedsCorroborationOrReview)
 
-Act 3  human_override (itself a governance event)
-          ↓ repairs
-       Authorization: Suspended -> Active
-          ↓ creates
-       Supervision relation (supervisor = the human)
-       -> ALLOW under supervision
+  Only the accepted evidence reaches R2R:
+    Trust         Active -> Warning
+    Delegation    Active -> Degraded
+    Authorization Active -> Suspended
+
+  -> DENY current call
+
+Act 2
+  A later benign judgment produces only rejected evidence.
+  No new Relation transition occurs.
+  The earlier suspended Authorization still governs the call.
+
+  -> DENY
+
+Act 3
+  human_override
+      -> repairs Authorization
+      -> creates Supervision
+
+  -> ALLOW under supervision
 ```
 
-Every admitted event, evidence record, and relation transition receives a
-deterministic sequential id (`ev-0001`, `evidence-0001`, `trust-0001`, ...),
-and the demo prints the causal provenance chain that connects them. There are
-no clocks and no randomness: replaying the same event sequence reproduces the
-same ids and the same output byte for byte.
+This distinguishes two forms of memory:
 
-The full R2R project explores richer typed relations, conflicts, propagation boundaries, reconciliation, replay, and enforcement.
+1. **evidence history** — what was observed and how Admission classified it;
+2. **governance state** — what accepted evidence caused the Relation Graph to become.
+
+## Provenance
+
+The runtime records both admission and relation causality:
+
+```text
+ev-0001
+  -> evidence-0001[BeyondScope:Accept(Strong)]
+  -> trust-0001
+  -> delegation-0001
+  -> authorization-0001
+
+ev-0001
+  -> evidence-0002[DestructiveAction:Hold(...)]
+ev-0001 [via authorization-0001]
+  -> DENY(merge_pull_request)
+```
+
+A held or rejected evidence record remains explainable without becoming authoritative.
+
+## Falsification boundary
+
+The earlier direct-threshold model remains useful as a baseline:
+
+```text
+score >= threshold
+    -> persistent suspension
+```
+
+Admission v0.1 is a hypothesis about reducing false-positive persistence while preserving history-sensitive governance when evidence is sufficiently supported.
+
+The repository therefore keeps the stateless/stateful experiments and adds an Admission experiment rather than claiming that v0.1 is universally superior.
 
 ## Enforcement is replaceable
 
@@ -130,8 +262,11 @@ Kubernetes admission
 CI/CD control point
 ```
 
-The integration target is therefore not "Jev + MCP". It is:
+The integration target is therefore:
 
 ```text
-probabilistic judgment -> persistent governance state -> arbitrary enforcement
+probabilistic judgment
+    -> evidence admission
+    -> persistent relation governance
+    -> arbitrary enforcement
 ```
