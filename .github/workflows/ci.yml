@@ -13,3 +13,4 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --all-targets
       - run: cargo run -- fixture
+      - run: cargo run --bin admission
