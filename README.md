@@ -2,27 +2,26 @@
 
 > **Jev judges. R2R remembers, governs, and reconciles.**
 
-`r2r-jev` is a small public integration that demonstrates one idea:
+`r2r-jev` is a small public integration built around one rule:
 
 > **A probabilistic judgment should be evidence, not authority.**
 
-Jev turns unstructured state into typed probabilistic decisions. R2R turns accepted evidence and events into persistent, replayable relation state.
+Jev turns unstructured state into typed probabilistic decisions. Evidence Admission decides which observations are eligible to enter governance. R2R turns admitted evidence and events into persistent, replayable relation state.
 
 ```text
-Reason                  Judge                     Govern                         Act
+Reason             Judge                Admit                 Govern                    Act
 
-LLM / Agent  ───────▶   Jev   ───────────────▶   R2R   ─────────────────────▶   MCP / Tools
-                        typed judgment            persistent relation state
-                              │                         │
-                              │ JudgmentObserved      │ Evidence
-                              │                         ▼
-                              └──────────────────▶  Trust
-                                                    │
-                                                    ▼
-                                                 Delegation
-                                                    │
-                                                    ▼
-                                               Authorization
+LLM / Agent  ───▶  Jev  ───────────▶  Evidence  ─────────▶  R2R  ─────────────────▶  MCP / Tools
+                   judgment             Admission v0.1        relation state
+                                            │                    │
+                                      Reject / Hold / Accept     ▼
+                                                           Trust
+                                                             │
+                                                             ▼
+                                                          Delegation
+                                                             │
+                                                             ▼
+                                                        Authorization
 ```
 
 The important boundary is:
@@ -31,7 +30,16 @@ The important boundary is:
 Jev result != permission
 ```
 
-A Jev score becomes a `JudgmentObserved` event. R2R then applies deterministic transition semantics to decide whether that evidence is strong enough to change Trust, Delegation, Authorization, Supervision, or other relations.
+The primary execution path is now:
+
+```text
+JudgmentObserved
+    -> typed evidence candidates
+    -> Accept / Hold / Reject
+    -> EvidenceAdmitted (Accept only)
+    -> R2R relation transitions
+    -> enforcement decision
+```
 
 ![Three-act demo](docs/demo.gif)
 
@@ -50,11 +58,17 @@ Given what has happened over time, what relationship now exists between
 this agent, this task, this resource, and the governing organization?
 ```
 
-A single judgment can therefore affect future actions without making the probabilistic model itself the authority source.
+Evidence Admission adds a second question before persistent state is allowed to change:
+
+```text
+Is this judgment sufficiently supported to enter governance at all?
+```
+
+That separation prevents a probabilistic score from silently becoming authority.
 
 ## Quick start — no API key
 
-The repository ships with a recorded Jev-style fixture so the governance path is runnable without network access:
+The repository ships with a recorded Jev-style fixture so the full governance path is runnable without network access:
 
 ```bash
 git clone https://github.com/Thneoly/r2r-jev.git
@@ -62,24 +76,30 @@ cd r2r-jev
 cargo run -- fixture
 ```
 
-Expected shape (three acts):
+Expected shape:
 
 ```text
-Act 1: a judgment becomes evidence, not permission
+Act 1: admission separates evidence from authority
   JudgmentObserved  event=ev-0001 provider=fixture:jev-style
   judgment          beyond_scope=0.940000 destructive=0.720000 tool=merge_pull_request
-  Evidence          evidence-0001 created
+  Evidence          evidence-0001 kind=BeyondScope confidence=0.940000
+  Admission         policy=0.1 Accept(Strong)
+  Evidence          evidence-0002 kind=DestructiveAction confidence=0.720000
+  Admission         policy=0.1 Hold(NeedsCorroborationOrReview)
   Trust             Active -> Warning             trust-0001 (caused by evidence-0001)
   Delegation        Active -> Degraded            delegation-0001 (caused by evidence-0001)
   Authorization     Active -> Suspended           authorization-0001 (caused by evidence-0001)
-  Decision          DENY merge_pull_request (threshold-crossing judgment admitted as evidence)
+  Decision          DENY merge_pull_request (accepted evidence changed persistent governance state)
 
-Act 2: the next call inherits history
+Act 2: rejected evidence does not erase persistent governance state
   JudgmentObserved  event=ev-0002 provider=fixture:jev-style
   judgment          beyond_scope=0.180000 destructive=0.120000 tool=read_file
-  Evidence          evidence-0002 created
-  Relations         unchanged (a stateless gate would ALLOW this call)
-  Decision          DENY read_file (authorization remains suspended by earlier evidence)
+  Evidence          evidence-0003 kind=BeyondScope confidence=0.180000
+  Admission         policy=0.1 Reject(InsufficientSupport)
+  Evidence          evidence-0004 kind=DestructiveAction confidence=0.120000
+  Admission         policy=0.1 Reject(InsufficientSupport)
+  Relations         unchanged (no new evidence was admitted)
+  Decision          DENY read_file (no evidence admitted; authorization remains suspended by earlier evidence)
 
 Act 3: human override repairs the relation, under supervision
   GovernanceEvent   event=ev-0003 kind=human_override supervisor=human-1
@@ -88,19 +108,64 @@ Act 3: human override repairs the relation, under supervision
   Decision          ALLOW merge_pull_request (human override restores authorization under supervision)
 
 Provenance
-  ev-0001 -> evidence-0001 -> trust-0001 -> delegation-0001 -> authorization-0001 -> DENY(merge_pull_request)
-  ev-0002 -> evidence-0002 [via authorization-0001] -> DENY(read_file)
+  ev-0001 -> evidence-0001[BeyondScope:Accept(Strong)] -> trust-0001 -> delegation-0001 -> authorization-0001
+  ev-0001 -> evidence-0002[DestructiveAction:Hold(NeedsCorroborationOrReview)]
+  ev-0001 [via authorization-0001] -> DENY(merge_pull_request)
+  ev-0002 -> evidence-0003[BeyondScope:Reject(InsufficientSupport)]
+  ev-0002 -> evidence-0004[DestructiveAction:Reject(InsufficientSupport)]
+  ev-0002 [via authorization-0001] -> DENY(read_file)
   ev-0003 -> authorization-0002 -> supervision-0001 -> ALLOW(merge_pull_request)
 ```
 
-Ids are sequential and deterministic: no clocks, no randomness. The same
-event sequence always produces the same output, byte for byte.
+Ids and virtual ticks are deterministic. The same event sequence, admission policy version, and trusted admission context reproduce the same result.
 
 The GIF above is regenerated from the demo output itself:
 
 ```bash
 python scripts/make_demo_gif.py   # requires Pillow
 ```
+
+## Evidence Admission Semantics v0.1
+
+The first executable admission policy is intentionally small and falsifiable.
+
+It considers:
+
+- typed evidence kind;
+- confidence in integer ppm;
+- caller-bound source reliability;
+- independent corroborator count;
+- virtual-time expiry.
+
+It returns:
+
+```text
+Reject(reason)
+Hold(reason)
+Accept(Strong | Corroborated)
+```
+
+Only `Accept` is allowed to emit governance-active `EvidenceAdmitted` input.
+
+Important counterexamples are built into the tests:
+
+```text
+99.9% confidence + low-reliability source -> Reject
+99.0% confidence + expired evidence      -> Reject
+76.0% confidence + no corroboration      -> Hold
+76.0% confidence + 2 corroborators       -> Accept(Corroborated)
+```
+
+Run the reference cases:
+
+```bash
+cargo run --bin admission
+cargo test --bin admission
+```
+
+Specification: [`docs/evidence-admission-semantics-v0.1.md`](docs/evidence-admission-semantics-v0.1.md)
+
+Experiment protocol: [`experiments/evidence-admission-v0.1/README.md`](experiments/evidence-admission-v0.1/README.md)
 
 ## Live Jev
 
@@ -120,22 +185,34 @@ cargo run -- live \
   --intent "Merge a pull request containing unrelated repository changes"
 ```
 
-The live adapter sends typed `noul` questions to Jev and converts returned floating-point probabilities into integer parts-per-million **at the adapter boundary**. The deterministic R2R demo kernel itself does not use floating point.
+The live adapter converts floating-point probabilities into integer parts-per-million **at the adapter boundary**. The deterministic governance path then applies Admission v0.1 before any R2R relation transition.
 
-Live mode covers a single judgment (Act 1). The full three-act story, including
-history inheritance and human override, is the fixture path above.
+Live mode also accepts trusted admission metadata from the caller:
+
+```bash
+cargo run -- live \
+  --source-reliability-ppm 850000 \
+  --corroborators 0 \
+  --task "Fix the login redirect bug" \
+  --tool "merge_pull_request" \
+  --scope "repo-alpha" \
+  --intent "Merge a pull request containing unrelated repository changes"
+```
+
+`source_reliability_ppm` is **configured trust metadata**, not a value returned by Jev and not a claim about measured model accuracy.
 
 ## Core design rule
 
 ```text
 Jev proposes evidence.
-R2R admits state transitions.
+Admission decides whether evidence may enter governance.
+R2R decides how admitted evidence changes relations.
 Enforcement executes the resulting decision.
 ```
 
 Or, more compactly:
 
-> **Judge -> Govern -> Act.**
+> **Judge -> Admit -> Govern -> Act.**
 
 ## Architecture
 
@@ -144,15 +221,19 @@ Or, more compactly:
 
  Agent state ───────────────▶ Jev
                                │
-                               │ typed answer + probability
                                ▼
                         JudgmentObserved
-
-──────────────── deterministic boundary ────────────────
-
                                │
                                ▼
-                       Evidence Relation
+                     typed evidence candidates
+                               │
+                               ▼
+                    Evidence Admission v0.1
+                    Reject / Hold / Accept
+                               │
+                         Accept only
+                               ▼
+                        EvidenceAdmitted
                                │
                           typed R -> R
                                │
@@ -168,69 +249,56 @@ See [`docs/architecture.md`](docs/architecture.md).
 
 ## What this repository is — and is not
 
-This repository is intentionally small. It demonstrates the integration boundary between a fast probabilistic judge and a deterministic relation-governance runtime.
+This repository is intentionally small. It demonstrates the integration boundary between a fast probabilistic judge and deterministic relation governance.
 
 It is **not**:
 
 - a claim that Jev itself should mutate authorization state;
 - a replacement for the full R2R runtime and calculus;
 - another generic MCP gateway;
-- a benchmark claiming R2R makes Jev more accurate.
+- a benchmark claiming R2R makes Jev more accurate;
+- a claim that Admission v0.1 is an optimal trust model.
 
-The research question is instead:
+The current research questions are:
 
 > **Does persistent governance state add value beyond stateless per-call gating?**
 
-A planned comparison will hold Jev judgments constant and compare:
+and:
 
-```text
-A. Judgment -> threshold -> allow / deny
-B. Judgment -> evidence -> relation state -> future governance
-```
+> **Can an explicit admission layer reduce false-positive persistence without losing the value of history-sensitive governance?**
 
 ## Why not just X?
 
 Neighboring projects answer different questions:
 
-- **Context pruning (winnow, yoshi, lcc, fast-jev-compaction)** — Jev judges
-  which text is still needed, and the payoff is tokens: "nothing is lost, it
-  just stops costing them." Here the payoff is authority: a judgment changes
-  long-lived relations that govern future calls, whether or not anything is
-  being pruned.
-- **Call/decision caches (jevcache and the caches inside lcc/yoshi)** — a
-  cache avoids re-asking the same question; the agent's standing is the same
-  before and after a hit. Here the judgment's *effect* is the point: evidence
-  is admitted once, and the relation state it produced keeps deciding later
-  calls.
-- **Memory layers (agent-beacon)** — record what happened across sessions and
-  serve it back: remembering without judging. This repository is the other
-  half of that sentence — it starts from a typed judgment and asks which
-  governance relations that evidence should change.
-- **Policy engines (OPA, Cedar, OpenFGA)** — evaluate authorization queries
-  against rules someone authored. The question here is one step earlier and
-  narrower: when a probabilistic judgment arrives, which relation transitions
-  does it justify, under what admission semantics, and with what provenance —
-  so that a wrong judgment cannot silently become a permission.
+- **Context pruning (winnow, yoshi, lcc, fast-jev-compaction)** — Jev judges which text is still needed, and the payoff is tokens. Here the payoff is governance state: admitted evidence can change long-lived relations that govern future calls.
+- **Call/decision caches (jevcache and caches inside lcc/yoshi)** — a cache avoids re-asking the same question; the agent's standing is unchanged by a hit. Here the effect of admitted evidence is the point.
+- **Memory layers (agent-beacon)** — record what happened across sessions and serve it back. R2R starts from typed evidence and asks what persistent governance relations it is allowed to change.
+- **Policy engines (OPA, Cedar, OpenFGA)** — evaluate authorization queries against authored rules. This repository studies the earlier boundary: when a probabilistic judgment arrives, whether it should enter governance, which relation transitions it may justify, and with what provenance.
 
 ## Repository layout
 
 ```text
 .
 ├── src/
+│   ├── admission.rs   # shared Evidence Admission v0.1 semantics
 │   ├── main.rs        # three-act demo CLI (fixture + live)
 │   ├── jev.rs         # Jev adapter
-│   ├── model.rs       # typed boundary objects
-│   ├── r2r.rs         # deterministic demo governance kernel
+│   ├── model.rs       # typed judgment boundary objects
+│   ├── r2r.rs         # deterministic demo relation-governance kernel
 │   └── bin/
-│       └── compare.rs # stateless vs stateful experiment
+│       ├── admission.rs # Admission v0.1 executable cases
+│       └── compare.rs   # stateless vs stateful baseline experiment
 ├── demo/
-│   └── fixtures/      # offline judgments
+│   └── fixtures/
 ├── scripts/
 │   └── make_demo_gif.py
 ├── experiments/
+│   ├── evidence-admission-v0.1/
 │   └── stateless-vs-stateful/
 ├── docs/
 │   ├── architecture.md
+│   ├── evidence-admission-semantics-v0.1.md
 │   └── why-r2r-after-jev.md
 └── .github/workflows/
     └── ci.yml
@@ -243,17 +311,14 @@ The full R2R project explores relations as first-class runtime resources with ty
 This repository focuses on one public integration surface:
 
 ```text
-probabilistic judgment -> evidence -> persistent relation state
+probabilistic judgment
+    -> evidence admission
+    -> persistent relation state
 ```
-
-## Status
-
-Early public demo. The fixture path is the reproducible reference path; the live Jev adapter is deliberately thin and isolated from deterministic governance semantics.
 
 ## Experiment: stateless gate vs stateful governance
 
-The repository includes a deliberately small comparison that feeds the same
-judgment stream to two arms:
+The repository keeps the earlier direct-threshold model as a **baseline**, not as the primary architecture:
 
 ```text
 A. judgment -> threshold -> current-call decision
@@ -267,20 +332,13 @@ cargo run --bin compare -- experiments/stateless-vs-stateful/persistent-policy.c
 cargo run --bin compare -- experiments/stateless-vs-stateful/false-positive.csv
 ```
 
-The second scenario is intentionally adversarial to persistent state: it shows
-that a false positive can have a larger temporal blast radius when evidence is
-persisted. This is why the intended design is **judgment -> evidence -> admission
-semantics -> relation transition**, not `score -> permission`.
+The false-positive scenario is intentionally adversarial to persistence. It motivates Admission v0.1 rather than being hidden.
 
-See [`experiments/stateless-vs-stateful/README.md`](experiments/stateless-vs-stateful/README.md)
-for what this experiment can and cannot establish.
+See [`experiments/stateless-vs-stateful/README.md`](experiments/stateless-vs-stateful/README.md).
 
 ## Non-affiliation
 
-This is an independent project. It is not affiliated with, endorsed by, or
-sponsored by TypeSafe AI. "Jev", "TypeSafe", and "System One" are used only
-to describe the public API this integration targets, and remain the property
-of their respective owners.
+This is an independent project. It is not affiliated with, endorsed by, or sponsored by TypeSafe AI. "Jev", "TypeSafe", and "System One" are used only to describe the public API this integration targets, and remain the property of their respective owners.
 
 ## License
 
