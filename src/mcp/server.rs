@@ -42,14 +42,98 @@ struct GovernanceRuntime {
 
 impl GovernanceRuntime {
     fn new() -> Self {
-        Self::with_store(Box::new(MemoryEventStore::new()))
+        Self::try_with_store(Box::new(MemoryEventStore::new()))
+            .expect("empty memory store recovery must succeed")
     }
 
-    fn with_store(store: Box<dyn EventStore>) -> Self {
-        Self {
-            domains: HashMap::new(),
-            store,
+    fn try_with_store(store: Box<dyn EventStore>) -> Result<Self, String> {
+        store.health()?;
+        let events = store.all_events();
+        let mut domains: HashMap<DomainKey, DomainRuntime> = HashMap::new();
+        let mut replayed_versions: HashMap<DomainKey, u64> = HashMap::new();
+
+        for stored_event in events {
+            let domain_key = stored_event.domain.clone();
+            let Some(input) = stored_event.replay_observation.clone() else {
+                if !stored_event.relation_transitions.is_empty() {
+                    return Err(format!(
+                        "cannot recover state-changing event {} without replay input",
+                        stored_event.event_id
+                    ));
+                }
+                continue;
+            };
+
+            if input.admission_policy_version != POLICY_VERSION {
+                return Err(format!(
+                    "cannot recover event {}: admission policy {} is unavailable (runtime {})",
+                    stored_event.event_id, input.admission_policy_version, POLICY_VERSION
+                ));
+            }
+
+            let domain = domains
+                .entry(domain_key.clone())
+                .or_insert_with(DomainRuntime::new);
+            let judgment = JudgmentObserved {
+                provider: input.provider,
+                subject: domain_key.subject.clone(),
+                scope: domain_key.scope.clone(),
+                task: input.task,
+                tool: input.action,
+                intent: input.intent,
+                beyond_scope_ppm: input.beyond_scope_ppm,
+                destructive_ppm: input.destructive_ppm,
+            };
+            let context = AdmissionContext::new(
+                input.source_reliability_ppm,
+                input.independent_corroborators,
+                input.now_vtick,
+                input.expires_vtick,
+            );
+            let outcome = domain.governance.observe_judgment(&judgment, context);
+            domain.projected_decision = outcome.decision;
+            domain.next_vtick = domain.next_vtick.max(context.now_vtick + 1);
+
+            for change in &outcome.relation_changes {
+                if change.relation == "Authorization" {
+                    domain.governing_authorization = Some(change.id.clone());
+                }
+            }
+
+            let version = replayed_versions.entry(domain_key.clone()).or_insert(0);
+            if !outcome.relation_changes.is_empty() {
+                *version += 1;
+            }
+            let replayed_state_version = format!("state-{version:06}");
+            let replayed_transitions: Vec<String> = outcome
+                .relation_changes
+                .iter()
+                .map(render_relation_change)
+                .collect();
+
+            if stored_event.kernel_event_id != outcome.event_id
+                || stored_event.state_version != replayed_state_version
+                || stored_event.relation_transitions != replayed_transitions
+            {
+                return Err(format!(
+                    "durable event log diverged at {}",
+                    stored_event.event_id
+                ));
+            }
         }
+
+        for (domain, version) in replayed_versions {
+            let replayed = format!("state-{version:06}");
+            let recorded = store.current_state_version(&domain);
+            if replayed != recorded {
+                return Err(format!(
+                    "durable state version mismatch for {}/{}: recorded={}, replayed={}",
+                    domain.subject, domain.scope, recorded, replayed
+                ));
+            }
+        }
+
+        Ok(Self { domains, store })
     }
 
     fn observe(&mut self, params: ObserveParams) -> Result<ObserveResponse, String> {
@@ -388,13 +472,18 @@ pub struct R2rMcpServer {
 
 impl R2rMcpServer {
     pub fn new() -> Self {
-        Self::with_store(Box::new(MemoryEventStore::new()))
+        Self::try_with_store(Box::new(MemoryEventStore::new()))
+            .expect("empty memory store recovery must succeed")
     }
 
     pub fn with_store(store: Box<dyn EventStore>) -> Self {
-        Self {
-            runtime: Arc::new(Mutex::new(GovernanceRuntime::with_store(store))),
-        }
+        Self::try_with_store(store).expect("event store recovery failed")
+    }
+
+    pub fn try_with_store(store: Box<dyn EventStore>) -> Result<Self, String> {
+        Ok(Self {
+            runtime: Arc::new(Mutex::new(GovernanceRuntime::try_with_store(store)?)),
+        })
     }
 
     fn with_runtime<T: Serialize>(
@@ -402,11 +491,23 @@ impl R2rMcpServer {
         f: impl FnOnce(&mut GovernanceRuntime) -> Result<T, String>,
     ) -> String {
         match self.runtime.lock() {
-            Ok(mut runtime) => match f(&mut runtime) {
-                Ok(value) => serde_json::to_string_pretty(&value)
-                    .unwrap_or_else(|e| error_json(format!("serialization error: {e}"))),
-                Err(error) => error_json(error),
-            },
+            Ok(mut runtime) => {
+                if let Err(error) = runtime.store.health() {
+                    return error_json(format!("event store unavailable: {error}"));
+                }
+
+                let result = f(&mut runtime);
+
+                if let Err(error) = runtime.store.health() {
+                    return error_json(format!("event store persistence failed: {error}"));
+                }
+
+                match result {
+                    Ok(value) => serde_json::to_string_pretty(&value)
+                        .unwrap_or_else(|e| error_json(format!("serialization error: {e}"))),
+                    Err(error) => error_json(error),
+                }
+            }
             Err(_) => error_json("governance runtime lock poisoned".to_string()),
         }
     }

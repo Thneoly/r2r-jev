@@ -1,12 +1,18 @@
 use super::{DomainKey, EventStore, StoredDecision, StoredEvent, StoredOutcome};
-use std::collections::HashMap;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DomainStateVersion {
+    domain: DomainKey,
+    version: u64,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct MemoryEventStore {
     events: Vec<StoredEvent>,
     decisions: Vec<StoredDecision>,
     outcomes: Vec<StoredOutcome>,
-    state_versions: HashMap<DomainKey, u64>,
+    state_versions: Vec<DomainStateVersion>,
     event_counter: u64,
     decision_counter: u64,
     outcome_counter: u64,
@@ -30,7 +36,11 @@ impl MemoryEventStore {
     }
 
     fn state_counter(&self, domain: &DomainKey) -> u64 {
-        *self.state_versions.get(domain).unwrap_or(&0)
+        self.state_versions
+            .iter()
+            .find(|entry| &entry.domain == domain)
+            .map(|entry| entry.version)
+            .unwrap_or(0)
     }
 }
 
@@ -40,9 +50,20 @@ impl EventStore for MemoryEventStore {
     }
 
     fn advance_state_version(&mut self, domain: &DomainKey) -> String {
-        let counter = self.state_versions.entry(domain.clone()).or_insert(0);
-        *counter += 1;
-        format!("state-{counter:06}")
+        if let Some(entry) = self
+            .state_versions
+            .iter_mut()
+            .find(|entry| &entry.domain == domain)
+        {
+            entry.version += 1;
+            return format!("state-{:06}", entry.version);
+        }
+
+        self.state_versions.push(DomainStateVersion {
+            domain: domain.clone(),
+            version: 1,
+        });
+        "state-000001".to_string()
     }
 
     fn next_event_id(&mut self) -> String {
@@ -64,6 +85,10 @@ impl EventStore for MemoryEventStore {
             .filter(|event| &event.domain == domain)
             .cloned()
             .collect()
+    }
+
+    fn all_events(&self) -> Vec<StoredEvent> {
+        self.events.clone()
     }
 
     fn next_decision_id(&mut self) -> String {
@@ -114,6 +139,24 @@ mod tests {
         assert_eq!(store.current_state_version(&beta), "state-000000");
         assert_eq!(store.advance_state_version(&beta), "state-000001");
         assert_eq!(store.current_state_version(&alpha), "state-000001");
+    }
+
+    #[test]
+    fn snapshot_round_trip_preserves_domain_versions_and_counters() {
+        let mut store = MemoryEventStore::new();
+        let alpha = DomainKey::new("agent:a", "repo:alpha");
+        assert_eq!(store.advance_state_version(&alpha), "state-000001");
+        assert_eq!(store.next_event_id(), "event-000001");
+        assert_eq!(store.next_decision_id(), "decision-000001");
+        assert_eq!(store.next_outcome_id(), "outcome-000001");
+
+        let encoded = serde_json::to_string(&store).expect("serialize");
+        let mut recovered: MemoryEventStore = serde_json::from_str(&encoded).expect("deserialize");
+
+        assert_eq!(recovered.current_state_version(&alpha), "state-000001");
+        assert_eq!(recovered.next_event_id(), "event-000002");
+        assert_eq!(recovered.next_decision_id(), "decision-000002");
+        assert_eq!(recovered.next_outcome_id(), "outcome-000002");
     }
 
     #[test]
