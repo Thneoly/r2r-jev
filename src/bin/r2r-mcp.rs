@@ -1,5 +1,5 @@
 use rmcp::{transport::stdio, ServiceExt};
-use r2r_jev::mcp::R2rMcpServer;
+use r2r_jev::mcp::{AnnotatedR2rMcpServer, R2rMcpServer};
 use r2r_jev::store::json_file::JsonFileEventStore;
 
 #[tokio::main]
@@ -12,7 +12,7 @@ async fn main() -> anyhow::Result<()> {
         _ => R2rMcpServer::new(),
     };
 
-    let service = server.serve(stdio()).await?;
+    let service = AnnotatedR2rMcpServer::new(server).serve(stdio()).await?;
     service.waiting().await?;
     Ok(())
 }
