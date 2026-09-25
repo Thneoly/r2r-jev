@@ -41,6 +41,7 @@ struct GovernanceRuntime {
 }
 
 impl GovernanceRuntime {
+    #[cfg(test)]
     fn new() -> Self {
         Self::try_with_store(Box::new(MemoryEventStore::new()))
             .expect("empty memory store recovery must succeed")
@@ -304,6 +305,8 @@ impl GovernanceRuntime {
             decision_id: decision_id.clone(),
             domain: domain_key,
             action: params.action,
+            resource: params.resource,
+            task: params.task,
             verdict: verdict.to_string(),
             reason_code: reason_code.to_string(),
             governing_relation_id: governing_authorization,
