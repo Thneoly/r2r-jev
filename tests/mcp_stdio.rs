@@ -17,7 +17,7 @@ fn text_json(result: &rmcp::model::CallToolResult) -> Value {
 }
 
 #[tokio::test]
-async fn stdio_server_lists_and_executes_observe_decide_explain() -> anyhow::Result<()> {
+async fn stdio_server_runs_observe_decide_explain_outcome_and_replay() -> anyhow::Result<()> {
     let client = ()
         .serve(TokioChildProcess::new(Command::new(env!("CARGO_BIN_EXE_r2r-mcp")))?)
         .await?;
@@ -31,6 +31,8 @@ async fn stdio_server_lists_and_executes_observe_decide_explain() -> anyhow::Res
             "r2r_decide".to_string(),
             "r2r_explain".to_string(),
             "r2r_observe".to_string(),
+            "r2r_record_outcome".to_string(),
+            "r2r_replay".to_string(),
         ]
     );
 
@@ -49,6 +51,7 @@ async fn stdio_server_lists_and_executes_observe_decide_explain() -> anyhow::Res
         )
         .await?;
     let observed = text_json(&observed);
+    assert_eq!(observed["event_id"], "event-000001");
     assert_eq!(observed["state_version"], "state-000001");
     assert!(observed["relation_transitions"]
         .as_array()
@@ -78,7 +81,7 @@ async fn stdio_server_lists_and_executes_observe_decide_explain() -> anyhow::Res
     let explanation = client
         .call_tool(
             CallToolRequestParams::new("r2r_explain").with_arguments(object!({
-                "decision_id": decision_id
+                "decision_id": decision_id.clone()
             })),
         )
         .await?;
@@ -88,7 +91,37 @@ async fn stdio_server_lists_and_executes_observe_decide_explain() -> anyhow::Res
         .as_array()
         .expect("causal chain")
         .iter()
-        .any(|value| value.as_str().is_some_and(|s| s.contains("authorization-0001"))));
+        .any(|value| value.as_str().is_some_and(|s| s.contains("event-000001"))));
+
+    let outcome = client
+        .call_tool(
+            CallToolRequestParams::new("r2r_record_outcome").with_arguments(object!({
+                "decision_id": decision_id,
+                "outcome": "blocked",
+                "detail": "enforcement adapter blocked execution"
+            })),
+        )
+        .await?;
+    let outcome = text_json(&outcome);
+    assert_eq!(outcome["outcome_id"], "outcome-000001");
+    assert_eq!(outcome["outcome"], "blocked");
+    assert_eq!(outcome["state_version"], "state-000001");
+    assert_eq!(outcome["relation_transitions"].as_array().unwrap().len(), 0);
+
+    let replay = client
+        .call_tool(
+            CallToolRequestParams::new("r2r_replay").with_arguments(object!({
+                "subject": "agent:coder-1",
+                "scope": "repo:alpha"
+            })),
+        )
+        .await?;
+    let replay = text_json(&replay);
+    assert_eq!(replay["replay_match"], true);
+    assert_eq!(replay["recorded_state_version"], "state-000001");
+    assert_eq!(replay["replayed_state_version"], "state-000001");
+    assert_eq!(replay["replayed_events"], 1);
+    assert!(replay["first_divergent_event"].is_null());
 
     client.cancel().await?;
     Ok(())
