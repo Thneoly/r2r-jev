@@ -1,5 +1,5 @@
-use super::{DomainKey, EventStore, StoredDecision, StoredEvent, StoredOutcome};
 use super::memory::MemoryEventStore;
+use super::{DomainKey, EventStore, StoredDecision, StoredEvent, StoredOutcome};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -19,9 +19,8 @@ impl JsonFileEventStore {
             if bytes.is_empty() {
                 MemoryEventStore::new()
             } else {
-                serde_json::from_slice(&bytes).map_err(|e| {
-                    format!("failed to decode event store {}: {e}", path.display())
-                })?
+                serde_json::from_slice(&bytes)
+                    .map_err(|e| format!("failed to decode event store {}: {e}", path.display()))?
             }
         } else {
             MemoryEventStore::new()
@@ -66,7 +65,10 @@ impl JsonFileEventStore {
             .map_err(|e| format!("failed to encode event store: {e}"))?;
         let temp_path = self.temp_path();
         fs::write(&temp_path, encoded).map_err(|e| {
-            format!("failed to write temporary store {}: {e}", temp_path.display())
+            format!(
+                "failed to write temporary store {}: {e}",
+                temp_path.display()
+            )
         })?;
         fs::rename(&temp_path, &self.path).map_err(|e| {
             let _ = fs::remove_file(&temp_path);
@@ -181,7 +183,9 @@ mod tests {
                 domain: domain.clone(),
                 action: "read_file".to_string(),
                 state_version: "state-000001".to_string(),
-                relation_transitions: vec!["authorization-0001:Authorization:Active -> Suspended".to_string()],
+                relation_transitions: vec![
+                    "authorization-0001:Authorization:Active -> Suspended".to_string()
+                ],
                 provenance: vec!["demo".to_string()],
                 replay_observation: Some(ReplayObservation {
                     provider: "fixture".to_string(),
