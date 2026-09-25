@@ -1,7 +1,7 @@
 use super::memory::MemoryEventStore;
 use super::{DomainKey, EventStore, StoredDecision, StoredEvent, StoredOutcome};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 #[derive(Debug)]
 pub struct JsonFileEventStore {
@@ -81,7 +81,7 @@ impl JsonFileEventStore {
     }
 
     #[cfg(test)]
-    fn path(&self) -> &Path {
+    fn path(&self) -> &std::path::Path {
         &self.path
     }
 }
