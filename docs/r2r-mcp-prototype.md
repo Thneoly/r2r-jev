@@ -8,7 +8,7 @@ It intentionally implements only the smallest real control loop:
 r2r_observe -> persistent R2R state -> r2r_decide -> r2r_explain
 ```
 
-The server uses the official Rust MCP SDK (`rmcp`), stdio transport, and an in-memory Event/Decision store.
+The server uses the official Rust MCP SDK (`rmcp`), stdio transport, an `EventStore` persistence boundary, and an in-memory store implementation.
 
 ## Run
 
@@ -77,11 +77,11 @@ Example arguments:
 
 The server binds the trusted Admission context internally, runs Evidence Admission, and lets only accepted evidence reach the R2R relation transitions.
 
-A state version advances only when the relation graph changes.
+A state version advances only when the relation graph for that `(subject, scope)` domain changes.
 
 ### `r2r_decide`
 
-Evaluate a proposed action against the current persistent relation state.
+Evaluate a proposed action against the persistent relation state for the requested `(subject, scope)` domain.
 
 Example arguments:
 
@@ -116,7 +116,7 @@ Explain a recorded decision:
 }
 ```
 
-The response includes the governing authorization relation, the state version used for the decision, and the recorded causal/provenance chain.
+The response includes the governing authorization relation, the domain-scoped state version used for the decision, and the recorded causal/provenance chain.
 
 ## End-to-end behavior
 
@@ -166,18 +166,39 @@ For v0.1 the server binds a deterministic demo Admission context internally. Thi
 
 ## Domain isolation
 
-The current demo R2R kernel models one governance state machine. To prevent accidental state bleed, one `r2r-mcp` stdio process binds to the first `(subject, scope)` pair it observes and rejects requests for a different pair.
+One `r2r-mcp` process can now host multiple isolated governance domains keyed by:
 
-This is an explicit prototype limitation, not the intended long-term multi-agent model.
+```text
+(subject, scope)
+```
 
-A production implementation should replace this with domain-keyed relation graphs and stores.
+Each domain owns an independent `Governance` state machine, virtual tick, projected decision, governing authorization relation, and state-version sequence. A suspension in `agent:coder-1 / repo:alpha` therefore does not change the decision or state version for `agent:coder-2 / repo:beta`.
+
+Decision identifiers remain store-wide so `r2r_explain(decision_id)` can address a decision directly.
+
+## EventStore boundary
+
+The runtime depends on the `EventStore` trait rather than directly on `MemoryEventStore`.
+
+The boundary currently covers:
+
+```text
+current_state_version(domain)
+advance_state_version(domain)
+record_event(event)
+next_decision_id()
+record_decision(decision)
+decision(decision_id)
+event(event_id)
+```
+
+`MemoryEventStore` is the reference implementation. A persistent implementation can replace it through `R2rMcpServer::with_store(...)` without changing MCP tool handlers.
 
 ## Current limitations
 
 This prototype is intentionally local and minimal:
 
-- in-memory state only; restart loses events and decisions;
-- one `(subject, scope)` governance domain per process;
+- the default store is in-memory; restart loses events and decisions;
 - no `r2r_record_outcome` yet;
 - no privileged `r2r_override` yet;
 - no deterministic `r2r_replay` endpoint yet;
