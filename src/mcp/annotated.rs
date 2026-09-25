@@ -1,8 +1,8 @@
 use super::R2rMcpServer;
 use rmcp::{
     model::{
-        CallToolRequestParams, CallToolResponse, ListToolsResult, PaginatedRequestParams, ServerInfo,
-        Tool, ToolAnnotations,
+        CallToolRequestParams, CallToolResponse, ListToolsResult, PaginatedRequestParams,
+        ServerInfo, Tool, ToolAnnotations,
     },
     service::RequestContext,
     ErrorData, RoleServer, ServerHandler,
