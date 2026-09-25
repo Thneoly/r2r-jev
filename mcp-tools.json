@@ -10,6 +10,12 @@
     {
       "name": "r2r_observe",
       "mutates_governance_state": true,
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
       "description": "Submit an untrusted probabilistic observation. The server binds trusted admission metadata, runs Evidence Admission, and applies only admitted evidence to the subject/scope R2R governance domain.",
       "input_fields": [
         "provider",
@@ -25,24 +31,48 @@
     {
       "name": "r2r_decide",
       "mutates_governance_state": false,
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
       "description": "Evaluate a proposed action against persistent R2R governance state for its subject/scope domain without mutating relation state.",
       "input_fields": ["subject", "scope", "action", "resource", "task"]
     },
     {
       "name": "r2r_explain",
       "mutates_governance_state": false,
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
       "description": "Explain a previously issued R2R decision using its recorded domain, state version, and causal provenance chain.",
       "input_fields": ["decision_id"]
     },
     {
       "name": "r2r_record_outcome",
       "mutates_governance_state": false,
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
       "description": "Record the observed result of a governed action. Outcome data is untrusted audit input in v0.1 and cannot directly mutate relation state.",
       "input_fields": ["decision_id", "outcome", "detail"]
     },
     {
       "name": "r2r_replay",
       "mutates_governance_state": false,
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
       "description": "Deterministically replay stored observation events for a subject/scope domain using their recorded trusted Admission context and report the first divergence.",
       "input_fields": ["subject", "scope"]
     }
@@ -50,6 +80,7 @@
   "notes": [
     "This file is a repository discovery catalog, not an alternative MCP protocol implementation.",
     "The normative runtime tool definitions are the rmcp #[tool] declarations in src/mcp/server.rs and the Rust schemas in src/mcp/schema.rs.",
-    "A real stdio integration test asserts the tools/list surface in tests/mcp_stdio.rs."
+    "A real stdio integration test asserts the tools/list surface in tests/mcp_stdio.rs.",
+    "Annotations mirror MCP ToolAnnotations semantics and are intended to match the runtime behavior: observe may change governance state; record_outcome is additive audit state; decide/explain/replay are read-only."
   ]
 }
