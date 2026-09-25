@@ -13,12 +13,20 @@ r2r_observe
   -> r2r_replay
 ```
 
-The server uses the official Rust MCP SDK (`rmcp`), stdio transport, an `EventStore` persistence boundary, and an in-memory reference store.
+The server uses the official Rust MCP SDK (`rmcp`), stdio transport, an `EventStore` persistence boundary, and both in-memory and durable local-store profiles.
 
 ## Run
 
+Default in-memory mode:
+
 ```bash
 cargo run --bin r2r-mcp
+```
+
+Durable local mode:
+
+```bash
+R2R_STORE_PATH=/absolute/path/r2r-store.json cargo run --bin r2r-mcp
 ```
 
 The process speaks MCP over stdin/stdout and is intended to be launched by an MCP host.
@@ -35,11 +43,16 @@ Then point the host at the executable:
 {
   "mcpServers": {
     "r2r": {
-      "command": "/absolute/path/to/r2r-jev/target/debug/r2r-mcp"
+      "command": "/absolute/path/to/r2r-jev/target/debug/r2r-mcp",
+      "env": {
+        "R2R_STORE_PATH": "/absolute/path/to/r2r-store.json"
+      }
     }
   }
 }
 ```
+
+Omit `R2R_STORE_PATH` to use the in-memory reference store.
 
 ## Tools
 
@@ -172,25 +185,31 @@ The first divergence is reported using the store-wide public event id.
 
 ## End-to-end behavior
 
-The real stdio integration test executes:
+The real stdio integration tests execute both the normal five-tool flow and a process restart flow:
 
 ```text
-MCP initialize
-  -> tools/list
-  -> r2r_observe
+process 1
+  -> r2r_observe(risky judgment)
+  -> Authorization Active -> Suspended
+  -> durable state-000001
+  -> exit
+
+process 2
+  -> open same R2R_STORE_PATH
+  -> startup recovery/replay
   -> r2r_decide
-  -> r2r_explain
-  -> r2r_record_outcome
+  -> DENY at state-000001
   -> r2r_replay
+  -> replay_match=true
 ```
 
-Run it with:
+Run them with:
 
 ```bash
 cargo test --test mcp_stdio
 ```
 
-The normal CI command includes it:
+The normal CI command includes them:
 
 ```bash
 cargo test --all-targets
@@ -227,11 +246,12 @@ Store-wide public ids prevent collisions between domain-local kernel ids. For ex
 
 ## EventStore boundary
 
-The runtime depends on the `EventStore` trait rather than directly on `MemoryEventStore`.
+The runtime depends on the `EventStore` trait rather than directly on a storage implementation.
 
-The boundary now covers domain state versions plus durable events, decisions, and outcomes:
+The boundary covers store health, domain state versions, durable events, decisions, and outcomes:
 
 ```text
+health()
 current_state_version(domain)
 advance_state_version(domain)
 
@@ -239,6 +259,7 @@ next_event_id()
 record_event(event)
 event(event_id)
 events_for_domain(domain)
+all_events()
 
 next_decision_id()
 record_decision(decision)
@@ -249,13 +270,39 @@ record_outcome(outcome)
 outcome(outcome_id)
 ```
 
-`MemoryEventStore` is the default implementation. A persistent implementation can replace it through `R2rMcpServer::with_store(...)` without changing MCP tool handlers.
+### `MemoryEventStore`
+
+The default reference implementation. It is deterministic but volatile.
+
+### `JsonFileEventStore`
+
+A local durable profile intended to prove persistence/recovery semantics before introducing a database backend.
+
+It serializes the complete store snapshot and replaces the target through a temporary file plus rename. A failed durable write marks the store unhealthy. MCP calls check store health before and after execution; after a persistence failure the runtime fails closed instead of silently continuing on volatile state.
+
+## Startup recovery
+
+Opening a durable store does not simply trust the serialized projected state.
+
+Before the MCP server starts accepting calls it:
+
+1. reads all stored observation events;
+2. rebuilds each `(subject, scope)` `Governance` kernel from scratch;
+3. uses the trusted Admission snapshot captured when each event was ingested;
+4. verifies the stored kernel event id;
+5. verifies every relation transition;
+6. verifies each resulting domain `state_version`;
+7. verifies the final stored domain state version.
+
+If the required Admission policy version is unavailable or any event diverges, startup fails rather than serving decisions from unverifiable state.
+
+This is the same core property used by `r2r_replay`, now applied to runtime recovery.
 
 ## Current limitations
 
 This prototype is still intentionally local and minimal:
 
-- the default store is in-memory; restart loses events, decisions, and outcomes;
+- durable mode is a single local JSON snapshot, not a transactional database and not safe for multiple concurrent writer processes;
 - outcome events are auditable but do not yet enter an outcome-specific Evidence Admission rule;
 - replay supports the current observation event type and current policy implementation, not historical loading of arbitrary old rule-pack binaries;
 - no privileged `r2r_override` MCP tool yet;
