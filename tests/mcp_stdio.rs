@@ -18,6 +18,41 @@ fn text_json(result: &rmcp::model::CallToolResult) -> Value {
     serde_json::from_str(&text.text).expect("tool text should contain JSON")
 }
 
+fn assert_tool_annotations(
+    tools: &[rmcp::model::Tool],
+    name: &str,
+    read_only: bool,
+    destructive: bool,
+    idempotent: bool,
+    open_world: bool,
+) {
+    let tool = tools
+        .iter()
+        .find(|tool| tool.name.as_ref() == name)
+        .unwrap_or_else(|| panic!("missing tool {name}"));
+    let annotations = tool
+        .annotations
+        .as_ref()
+        .unwrap_or_else(|| panic!("missing annotations for {name}"));
+
+    assert_eq!(annotations.read_only_hint, Some(read_only), "{name} readOnlyHint");
+    assert_eq!(
+        annotations.destructive_hint,
+        Some(destructive),
+        "{name} destructiveHint"
+    );
+    assert_eq!(
+        annotations.idempotent_hint,
+        Some(idempotent),
+        "{name} idempotentHint"
+    );
+    assert_eq!(
+        annotations.open_world_hint,
+        Some(open_world),
+        "{name} openWorldHint"
+    );
+}
+
 fn temp_store_path(label: &str) -> PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -48,6 +83,12 @@ async fn stdio_server_runs_observe_decide_explain_outcome_and_replay() -> anyhow
             "r2r_replay".to_string(),
         ]
     );
+
+    assert_tool_annotations(&tools, "r2r_observe", false, true, false, false);
+    assert_tool_annotations(&tools, "r2r_decide", false, false, false, false);
+    assert_tool_annotations(&tools, "r2r_explain", true, false, true, false);
+    assert_tool_annotations(&tools, "r2r_record_outcome", false, false, false, false);
+    assert_tool_annotations(&tools, "r2r_replay", true, false, true, false);
 
     let observed = client
         .call_tool(
