@@ -2,86 +2,112 @@
 
 ## Scope
 
-`r2r-jev` is a research integration demonstrating a deterministic governance boundary around probabilistic Jev judgments.
+This document covers the reference `r2r-mcp` server, Evidence Admission implementation, R2R governance runtime, local persistence profile, and live Jev adapter in this repository.
 
-The repository currently provides a Rust CLI/demo and supporting experiments. It does **not** currently expose a standalone MCP server endpoint or a production authorization service.
+Security fixes are applied to the latest revision of `main` while the project remains pre-1.0.
 
-The security-sensitive boundary is:
+## Security model
+
+The core trust boundary is:
 
 ```text
-probabilistic judgment
-    -> Evidence Admission
-    -> persistent R2R relation state
-    -> enforcement decision
+untrusted observation / model output
+        -> Evidence Admission
+        -> deterministic R2R relation transitions
+        -> governance decision
+        -> external enforcement adapter
 ```
 
-A Jev score is treated as evidence, never as authority by itself.
+An MCP caller is not allowed to directly set relation state, source reliability, policy versions, corroborator identity/count, virtual-time authority, or operator identity.
 
-## Supported versions
+`r2r_decide` is read-only with respect to relation state. `r2r_record_outcome` records caller-supplied outcome data but does not directly turn that data into governance authority.
 
-Security fixes are applied to the latest revision of the `main` branch while the project remains pre-1.0.
+## Transport profiles
 
-## Reporting a vulnerability
+### Local stdio
 
-Please do not open a public issue for a vulnerability that could expose credentials, bypass an authorization boundary, corrupt persistent governance state, or enable unintended network/file access.
+The current reference server uses stdio and is launched by an MCP host as a child process. It does not bind a public TCP/HTTP listener.
 
-Instead, use GitHub's private vulnerability reporting / Security Advisory flow for this repository when available. If private reporting is unavailable, contact the repository maintainer through the public contact information associated with the GitHub account and avoid including exploit details in public channels.
+Authentication and request rate limiting are therefore delegated to the local host/process boundary for this profile. This must not be interpreted as a production remote-access security model.
 
-Please include:
+### Future remote transport
 
-- affected commit/version;
-- reproduction steps or a minimal proof of concept;
-- expected vs actual security behavior;
-- impact and prerequisites;
-- any suggested mitigation.
+A remote Streamable HTTP deployment must add, at minimum:
 
-## Security assumptions and boundaries
+- authenticated client identity;
+- authorization scoped to governance domains and privileged operations;
+- TLS;
+- request/body limits;
+- per-client and/or per-subject rate limiting;
+- replay/idempotency protection where mutation is possible;
+- audit logging for privileged operations;
+- secret-management integration.
 
-### Credentials
+Remote mode should not be advertised as production-ready until those controls are implemented and tested.
 
-Live mode reads `TYPESAFE_API_KEY` from the caller environment. The fixture path does not require a network credential.
+## Persistence
 
-The project does not intentionally persist API keys or include them in governance state or provenance output.
+`MemoryEventStore` is volatile.
+
+`JsonFileEventStore` is a local single-writer reference profile. Startup recovery replays stored observation events and verifies kernel event ids, relation transitions, and state versions before serving decisions.
+
+The JSON store is not intended for concurrent multi-process writers or hostile shared filesystems. Production deployments should use a transactional backend with access control, integrity protection, and appropriate backup/retention controls.
+
+## Fail-closed behavior
+
+A durable-store persistence failure marks the store unhealthy. MCP calls check store health and return an error rather than silently continuing to issue governance decisions from state that was not durably committed.
+
+Startup also fails if the durable event log cannot be reproduced with the available Admission policy or if replay diverges from recorded transitions/state versions.
+
+## Credentials and network access
+
+Fixture mode and local `r2r-mcp` operation do not require an API key.
+
+Live Jev mode reads `TYPESAFE_API_KEY` from the caller environment. The project does not intentionally persist API keys or include them in governance state or provenance output.
 
 `TYPESAFE_ENDPOINT` is caller-controlled, but the live adapter rejects endpoints that do not use the `https://` scheme before constructing a request with the bearer credential. Custom HTTPS endpoints must still be treated as trusted configuration and must not be sourced from untrusted input.
 
-### Network access
+The deterministic fixture path does not require network access. Live Jev mode performs outbound access only when explicitly invoked.
 
-The deterministic fixture path is intended to run without network access.
+## Governance integrity
 
-Live Jev mode performs an outbound request only to an HTTPS endpoint accepted by the adapter. No inbound network listener is provided by this repository.
+Only evidence that returns `Accept(...)` from the versioned Evidence Admission policy can mutate the current demo relation state. `Hold(...)` and `Reject(...)` do not enter governance.
 
-### Filesystem access
+Outcome reports are treated as untrusted audit input in v0.1. Even `policy_breach_confirmed` does not directly mutate relation state without a future Admission rule.
 
-The Rust runtime in this repository does not require arbitrary filesystem access for the governance path. Demo fixtures and experiment inputs are repository-local inputs selected by the caller.
+Human override inside the kernel is modeled as an explicit governance event and produces provenance rather than silently resetting state. A privileged MCP override tool is not yet exposed.
 
-### Governance integrity
+## Determinism and recovery
 
-Only evidence that returns `Accept(...)` from the versioned Evidence Admission policy is allowed to mutate persistent demo relation state. `Hold(...)` and `Reject(...)` do not enter governance.
+The governance kernel uses deterministic virtual ticks and sequential identifiers rather than wall-clock time or randomness in the relation-transition path.
 
-Human override is modeled as an explicit governance event and creates provenance rather than silently resetting state.
-
-### Determinism
-
-The governance kernel uses deterministic virtual ticks and sequential identifiers rather than wall-clock time or randomness. Replaying the same event sequence with the same policy version and trusted admission context is expected to reproduce the same result.
+Durable startup recovery and `r2r_replay` rebuild governance from stored events and trusted Admission snapshots, then verify recorded transitions and state versions.
 
 ## Security testing
 
-CI executes the Rust test suite and the offline fixture path. The repository also keeps a top-level `tests/` contract test so external security/indexing tools can detect executable test coverage in addition to module-local Rust unit tests.
+CI executes Rust unit/integration tests, the offline fixture, the Admission reference binary, real stdio MCP tool calls, deterministic replay, and a cross-process durable restart test.
 
-Important classes of regression include:
+Important regression classes include:
 
 - probabilistic judgments bypassing Evidence Admission;
-- rejected or held evidence mutating relation state;
+- held/rejected evidence mutating relation state;
 - low-reliability sources gaining authority through confidence alone;
 - expired evidence being admitted;
-- replay becoming nondeterministic;
-- human override failing to produce provenance/supervision state;
-- fixture execution unexpectedly requiring credentials or network access;
-- live endpoint configuration allowing bearer credentials to be sent over non-HTTPS transports.
+- domain state leaking across `(subject, scope)` boundaries;
+- duplicate public event identity across domains;
+- durable restart reverting a suspended authorization to default allow;
+- replay divergence being ignored;
+- persistence failure silently continuing on volatile state;
+- live endpoint configuration allowing bearer credentials over non-HTTPS transport.
 
-## Third-party trust indexes
+## Reporting a vulnerability
 
-Third-party scanners and registries may index this public repository independently. Their labels, scores, classifications, and scan timestamps are external assessments and may lag the current repository state.
+Please do not open a public issue for a vulnerability that could expose credentials, bypass an authorization boundary, corrupt governance state, or enable unintended network/file access.
 
-If an external index classifies `r2r-jev` as an MCP server, note that the current repository is an integration/governance research project and does not presently implement a standalone MCP server transport.
+Use GitHub's private vulnerability reporting / Security Advisory flow when available. If private reporting is unavailable, contact the repository maintainer through the public contact information associated with the GitHub account and avoid including exploit details in public channels.
+
+Please include the affected commit/version, reproduction steps, expected vs actual behavior, impact/prerequisites, and any suggested mitigation.
+
+## Third-party verification
+
+Third-party scanners and registries may lag the current repository state or have language-specific analysis limitations. Their scores should be interpreted together with the exact verified commit/code hash and the repository's executable tests.
