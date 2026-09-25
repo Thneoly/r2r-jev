@@ -27,6 +27,43 @@ pub struct ExplainParams {
     pub decision_id: String,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum OutcomeKind {
+    Executed,
+    Blocked,
+    Failed,
+    RolledBack,
+    UserCorrected,
+    PolicyBreachConfirmed,
+}
+
+impl OutcomeKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Executed => "executed",
+            Self::Blocked => "blocked",
+            Self::Failed => "failed",
+            Self::RolledBack => "rolled_back",
+            Self::UserCorrected => "user_corrected",
+            Self::PolicyBreachConfirmed => "policy_breach_confirmed",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct RecordOutcomeParams {
+    pub decision_id: String,
+    pub outcome: OutcomeKind,
+    pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct ReplayParams {
+    pub subject: String,
+    pub scope: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct AdmissionSummary {
     pub evidence_id: String,
@@ -70,6 +107,25 @@ pub struct ExplainResponse {
     pub governing_relation_id: Option<String>,
     pub causal_chain: Vec<String>,
     pub summary: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RecordOutcomeResponse {
+    pub outcome_id: String,
+    pub decision_id: String,
+    pub outcome: String,
+    pub state_version: String,
+    pub relation_transitions: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ReplayResponse {
+    pub replay_match: bool,
+    pub recorded_state_version: String,
+    pub replayed_state_version: String,
+    pub replayed_events: usize,
+    pub first_divergent_event: Option<String>,
+    pub policy_versions: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

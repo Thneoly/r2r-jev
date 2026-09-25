@@ -1,16 +1,21 @@
 use super::schema::{
     AdmissionSummary, DecideParams, DecideResponse, ErrorResponse, ExplainParams, ExplainResponse,
-    GoverningRelation, ObserveParams, ObserveResponse,
+    GoverningRelation, ObserveParams, ObserveResponse, RecordOutcomeParams, RecordOutcomeResponse,
+    ReplayParams, ReplayResponse,
 };
-use crate::admission::{AdmissionContext, PPM};
+use crate::admission::{AdmissionContext, POLICY_VERSION, PPM};
 use crate::model::JudgmentObserved;
 use crate::r2r::{Decision, Governance};
 use crate::store::memory::MemoryEventStore;
-use crate::store::{DomainKey, EventStore, StoredDecision, StoredEvent};
+use crate::store::{
+    DomainKey, EventStore, ReplayObservation, StoredDecision, StoredEvent, StoredOutcome,
+};
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+
+const RULE_PACK_VERSION: &str = "demo-0.1";
 
 struct DomainRuntime {
     governance: Governance,
@@ -54,26 +59,38 @@ impl GovernanceRuntime {
 
         let domain_key = DomainKey::new(params.subject.clone(), params.scope.clone());
         let judgment = JudgmentObserved {
-            provider: params.provider,
-            subject: params.subject,
-            scope: params.scope,
-            task: params.task,
+            provider: params.provider.clone(),
+            subject: params.subject.clone(),
+            scope: params.scope.clone(),
+            task: params.task.clone(),
             tool: params.action.clone(),
-            intent: params.intent,
+            intent: params.intent.clone(),
             beyond_scope_ppm: params.beyond_scope_ppm,
             destructive_ppm: params.destructive_ppm,
         };
 
-        let (outcome, relation_transitions, provenance) = {
+        let (outcome, relation_transitions, kernel_provenance, replay_observation) = {
             let domain = self
                 .domains
                 .entry(domain_key.clone())
                 .or_insert_with(DomainRuntime::new);
 
-            // v0.1 trust boundary: reliability/expiry are server-bound. The MCP caller
-            // cannot self-assert source reliability or corroborator count.
             let context = AdmissionContext::demo(domain.next_vtick);
             domain.next_vtick += 1;
+
+            let replay_observation = ReplayObservation {
+                provider: params.provider.clone(),
+                task: params.task.clone(),
+                action: params.action.clone(),
+                intent: params.intent.clone(),
+                beyond_scope_ppm: params.beyond_scope_ppm,
+                destructive_ppm: params.destructive_ppm,
+                source_reliability_ppm: context.source_reliability_ppm,
+                independent_corroborators: context.independent_corroborators,
+                now_vtick: context.now_vtick,
+                expires_vtick: context.expires_vtick,
+                admission_policy_version: POLICY_VERSION.to_string(),
+            };
 
             let provenance_start = domain.governance.provenance().len();
             let outcome = domain.governance.observe_judgment(&judgment, context);
@@ -88,15 +105,15 @@ impl GovernanceRuntime {
             let relation_transitions: Vec<String> = outcome
                 .relation_changes
                 .iter()
-                .map(|change| {
-                    format!(
-                        "{}:{}:{}",
-                        change.id, change.relation, change.transition
-                    )
-                })
+                .map(render_relation_change)
                 .collect();
-            let provenance = domain.governance.provenance()[provenance_start..].to_vec();
-            (outcome, relation_transitions, provenance)
+            let kernel_provenance = domain.governance.provenance()[provenance_start..].to_vec();
+            (
+                outcome,
+                relation_transitions,
+                kernel_provenance,
+                replay_observation,
+            )
         };
 
         let state_version = if outcome.relation_changes.is_empty() {
@@ -105,13 +122,22 @@ impl GovernanceRuntime {
             self.store.advance_state_version(&domain_key)
         };
 
+        let event_id = self.store.next_event_id();
+        let mut provenance = vec![format!(
+            "{} [kernel_event={} domain={}/{}]",
+            event_id, outcome.event_id, domain_key.subject, domain_key.scope
+        )];
+        provenance.extend(kernel_provenance);
+
         self.store.record_event(StoredEvent {
-            event_id: outcome.event_id.clone(),
+            event_id: event_id.clone(),
+            kernel_event_id: outcome.event_id.clone(),
             domain: domain_key,
             action: params.action,
             state_version: state_version.clone(),
             relation_transitions: relation_transitions.clone(),
             provenance,
+            replay_observation: Some(replay_observation),
         });
 
         let admissions = outcome
@@ -127,7 +153,7 @@ impl GovernanceRuntime {
             .collect();
 
         Ok(ObserveResponse {
-            event_id: outcome.event_id,
+            event_id,
             admissions,
             relation_transitions,
             state_version,
@@ -136,7 +162,7 @@ impl GovernanceRuntime {
 
     fn decide(&mut self, params: DecideParams) -> Result<DecideResponse, String> {
         let domain_key = DomainKey::new(params.subject, params.scope);
-        let (projected_decision, governing_authorization, mut provenance) = {
+        let (projected_decision, governing_authorization) = {
             let domain = self
                 .domains
                 .entry(domain_key.clone())
@@ -144,9 +170,15 @@ impl GovernanceRuntime {
             (
                 domain.projected_decision,
                 domain.governing_authorization.clone(),
-                domain.governance.provenance().to_vec(),
             )
         };
+
+        let mut provenance: Vec<String> = self
+            .store
+            .events_for_domain(&domain_key)
+            .into_iter()
+            .flat_map(|event| event.provenance)
+            .collect();
 
         let decision_id = self.store.next_decision_id();
         let state_version = self.store.current_state_version(&domain_key);
@@ -238,6 +270,115 @@ impl GovernanceRuntime {
             summary,
         })
     }
+
+    fn record_outcome(
+        &mut self,
+        params: RecordOutcomeParams,
+    ) -> Result<RecordOutcomeResponse, String> {
+        let decision = self
+            .store
+            .decision(&params.decision_id)
+            .ok_or_else(|| format!("unknown decision_id: {}", params.decision_id))?;
+
+        let outcome_id = self.store.next_outcome_id();
+        let state_version = self.store.current_state_version(&decision.domain);
+        let outcome = params.outcome.as_str().to_string();
+
+        self.store.record_outcome(StoredOutcome {
+            outcome_id: outcome_id.clone(),
+            decision_id: decision.decision_id.clone(),
+            domain: decision.domain,
+            outcome: outcome.clone(),
+            detail: params.detail,
+            state_version: state_version.clone(),
+        });
+
+        Ok(RecordOutcomeResponse {
+            outcome_id,
+            decision_id: decision.decision_id,
+            outcome,
+            state_version,
+            relation_transitions: Vec::new(),
+        })
+    }
+
+    fn replay(&self, params: ReplayParams) -> Result<ReplayResponse, String> {
+        let domain_key = DomainKey::new(params.subject, params.scope);
+        let events = self.store.events_for_domain(&domain_key);
+        let recorded_state_version = self.store.current_state_version(&domain_key);
+
+        let mut governance = Governance::new();
+        let mut replayed_state_counter = 0_u64;
+        let mut replayed_events = 0_usize;
+        let mut first_divergent_event = None;
+
+        for stored_event in events {
+            let Some(input) = stored_event.replay_observation else {
+                continue;
+            };
+            replayed_events += 1;
+
+            if input.admission_policy_version != POLICY_VERSION {
+                first_divergent_event.get_or_insert(stored_event.event_id);
+                break;
+            }
+
+            let judgment = JudgmentObserved {
+                provider: input.provider,
+                subject: domain_key.subject.clone(),
+                scope: domain_key.scope.clone(),
+                task: input.task,
+                tool: input.action,
+                intent: input.intent,
+                beyond_scope_ppm: input.beyond_scope_ppm,
+                destructive_ppm: input.destructive_ppm,
+            };
+            let context = AdmissionContext::new(
+                input.source_reliability_ppm,
+                input.independent_corroborators,
+                input.now_vtick,
+                input.expires_vtick,
+            );
+            let outcome = governance.observe_judgment(&judgment, context);
+            if !outcome.relation_changes.is_empty() {
+                replayed_state_counter += 1;
+            }
+
+            let replayed_state_version = format!("state-{replayed_state_counter:06}");
+            let replayed_transitions: Vec<String> = outcome
+                .relation_changes
+                .iter()
+                .map(render_relation_change)
+                .collect();
+
+            if stored_event.kernel_event_id != outcome.event_id
+                || stored_event.state_version != replayed_state_version
+                || stored_event.relation_transitions != replayed_transitions
+            {
+                first_divergent_event.get_or_insert(stored_event.event_id);
+            }
+        }
+
+        let replayed_state_version = format!("state-{replayed_state_counter:06}");
+        let replay_match = first_divergent_event.is_none()
+            && recorded_state_version == replayed_state_version;
+
+        Ok(ReplayResponse {
+            replay_match,
+            recorded_state_version,
+            replayed_state_version,
+            replayed_events,
+            first_divergent_event,
+            policy_versions: vec![
+                format!("admission:{POLICY_VERSION}"),
+                format!("r2r-rules:{RULE_PACK_VERSION}"),
+            ],
+        })
+    }
+}
+
+fn render_relation_change(change: &crate::r2r::RelationChange) -> String {
+    format!("{}:{}:{}", change.id, change.relation, change.transition)
 }
 
 #[derive(Clone)]
@@ -299,6 +440,20 @@ impl R2rMcpServer {
     fn r2r_explain(&self, Parameters(params): Parameters<ExplainParams>) -> String {
         self.with_runtime(|runtime| runtime.explain(params))
     }
+
+    #[tool(
+        description = "Record the observed result of a governed action. Outcome data is untrusted audit input in v0.1 and cannot directly mutate relation state."
+    )]
+    fn r2r_record_outcome(&self, Parameters(params): Parameters<RecordOutcomeParams>) -> String {
+        self.with_runtime(|runtime| runtime.record_outcome(params))
+    }
+
+    #[tool(
+        description = "Deterministically replay all stored observation events for a subject/scope domain using their recorded trusted Admission context and report the first divergence."
+    )]
+    fn r2r_replay(&self, Parameters(params): Parameters<ReplayParams>) -> String {
+        self.with_runtime(|runtime| runtime.replay(params))
+    }
 }
 
 fn error_json(error: String) -> String {
@@ -308,6 +463,7 @@ fn error_json(error: String) -> String {
 
 #[cfg(test)]
 mod tests {
+    use crate::mcp::schema::OutcomeKind;
     use super::*;
 
     fn risky_observation(subject: &str, scope: &str) -> ObserveParams {
@@ -339,6 +495,7 @@ mod tests {
         let observed = runtime
             .observe(risky_observation("agent:coder-1", "repo:alpha"))
             .expect("observe");
+        assert_eq!(observed.event_id, "event-000001");
         assert_eq!(observed.state_version, "state-000001");
         assert!(observed
             .relation_transitions
@@ -357,6 +514,10 @@ mod tests {
             })
             .expect("explain");
         assert_eq!(explanation.verdict, "DENY");
+        assert!(explanation
+            .causal_chain
+            .iter()
+            .any(|line| line.contains("event-000001")));
         assert!(explanation
             .causal_chain
             .iter()
@@ -389,33 +550,85 @@ mod tests {
     }
 
     #[test]
-    fn domains_are_isolated_inside_one_mcp_process() {
+    fn domains_are_isolated_and_public_event_ids_remain_unique() {
         let mut runtime = GovernanceRuntime::new();
-        runtime
+        let alpha_event = runtime
             .observe(risky_observation("agent:coder-1", "repo:alpha"))
             .expect("observe alpha");
+        let beta_event = runtime
+            .observe(risky_observation("agent:coder-2", "repo:beta"))
+            .expect("observe beta");
+
+        assert_eq!(alpha_event.event_id, "event-000001");
+        assert_eq!(beta_event.event_id, "event-000002");
+        assert_eq!(alpha_event.state_version, "state-000001");
+        assert_eq!(beta_event.state_version, "state-000001");
 
         let alpha = runtime
             .decide(decide("agent:coder-1", "repo:alpha"))
             .expect("decide alpha");
-        let beta = runtime
-            .decide(decide("agent:coder-2", "repo:beta"))
-            .expect("decide beta");
-
+        let fresh = runtime
+            .decide(decide("agent:coder-3", "repo:gamma"))
+            .expect("decide fresh");
         assert_eq!(alpha.decision, "DENY");
-        assert_eq!(alpha.state_version, "state-000001");
-        assert_eq!(beta.decision, "ALLOW");
-        assert_eq!(beta.state_version, "state-000000");
+        assert_eq!(fresh.decision, "ALLOW");
+        assert_eq!(fresh.state_version, "state-000000");
+    }
 
-        let beta_observed = runtime
-            .observe(risky_observation("agent:coder-2", "repo:beta"))
-            .expect("observe beta");
-        assert_eq!(beta_observed.state_version, "state-000001");
-
-        let alpha_again = runtime
+    #[test]
+    fn outcome_is_linked_to_decision_without_direct_relation_mutation() {
+        let mut runtime = GovernanceRuntime::new();
+        runtime
+            .observe(risky_observation("agent:coder-1", "repo:alpha"))
+            .expect("observe");
+        let decision = runtime
             .decide(decide("agent:coder-1", "repo:alpha"))
-            .expect("decide alpha again");
-        assert_eq!(alpha_again.decision, "DENY");
-        assert_eq!(alpha_again.state_version, "state-000001");
+            .expect("decide");
+
+        let outcome = runtime
+            .record_outcome(RecordOutcomeParams {
+                decision_id: decision.decision_id,
+                outcome: OutcomeKind::Blocked,
+                detail: Some("enforcement adapter blocked execution".to_string()),
+            })
+            .expect("record outcome");
+
+        assert_eq!(outcome.outcome_id, "outcome-000001");
+        assert_eq!(outcome.outcome, "blocked");
+        assert_eq!(outcome.state_version, "state-000001");
+        assert!(outcome.relation_transitions.is_empty());
+    }
+
+    #[test]
+    fn replay_reproduces_domain_state_and_transitions() {
+        let mut runtime = GovernanceRuntime::new();
+        runtime
+            .observe(risky_observation("agent:coder-1", "repo:alpha"))
+            .expect("observe risky");
+        runtime
+            .observe(ObserveParams {
+                provider: "fixture:jev-style".to_string(),
+                subject: "agent:coder-1".to_string(),
+                scope: "repo:alpha".to_string(),
+                task: "fix login redirect".to_string(),
+                action: "read_file".to_string(),
+                intent: "read source".to_string(),
+                beyond_scope_ppm: 180_000,
+                destructive_ppm: 120_000,
+            })
+            .expect("observe benign");
+
+        let replay = runtime
+            .replay(ReplayParams {
+                subject: "agent:coder-1".to_string(),
+                scope: "repo:alpha".to_string(),
+            })
+            .expect("replay");
+
+        assert!(replay.replay_match);
+        assert_eq!(replay.recorded_state_version, "state-000001");
+        assert_eq!(replay.replayed_state_version, "state-000001");
+        assert_eq!(replay.replayed_events, 2);
+        assert!(replay.first_divergent_event.is_none());
     }
 }
