@@ -1,0 +1,33 @@
+name: update-remote-lock
+
+on:
+  push:
+    branches:
+      - feat/remote-profile-v0.1
+    paths:
+      - .github/workflows/update-remote-lock.yml
+      - Cargo.toml
+
+permissions:
+  contents: write
+
+jobs:
+  lockfile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/remote-profile-v0.1
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo generate-lockfile
+      - name: Commit Cargo.lock
+        run: |
+          if git diff --quiet -- Cargo.lock; then
+            echo "Cargo.lock already current"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Cargo.lock
+          git commit -m "chore: update Cargo.lock for remote profile"
+          git push origin HEAD:feat/remote-profile-v0.1
