@@ -39,7 +39,7 @@ async fn wait_until_listening(port: u16, child: &mut Child) -> anyhow::Result<()
 async fn raw_http(port: u16, request: String) -> anyhow::Result<String> {
     let mut stream = TcpStream::connect(("127.0.0.1", port)).await?;
     stream.write_all(request.as_bytes()).await?;
-    stream.shutdown().await?;
+    stream.flush().await?;
     let mut response = Vec::new();
     timeout(Duration::from_secs(3), stream.read_to_end(&mut response)).await??;
     Ok(String::from_utf8_lossy(&response).into_owned())
