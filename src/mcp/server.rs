@@ -41,6 +41,7 @@ struct GovernanceRuntime {
 }
 
 impl GovernanceRuntime {
+    #[cfg(test)]
     fn new() -> Self {
         Self::try_with_store(Box::new(MemoryEventStore::new()))
             .expect("empty memory store recovery must succeed")
@@ -304,6 +305,8 @@ impl GovernanceRuntime {
             decision_id: decision_id.clone(),
             domain: domain_key,
             action: params.action,
+            resource: params.resource,
+            task: params.task,
             verdict: verdict.to_string(),
             reason_code: reason_code.to_string(),
             governing_relation_id: governing_authorization,
@@ -444,8 +447,8 @@ impl GovernanceRuntime {
         }
 
         let replayed_state_version = format!("state-{replayed_state_counter:06}");
-        let replay_match = first_divergent_event.is_none()
-            && recorded_state_version == replayed_state_version;
+        let replay_match =
+            first_divergent_event.is_none() && recorded_state_version == replayed_state_version;
 
         Ok(ReplayResponse {
             replay_match,
@@ -564,8 +567,8 @@ fn error_json(error: String) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::mcp::schema::OutcomeKind;
     use super::*;
+    use crate::mcp::schema::OutcomeKind;
 
     fn risky_observation(subject: &str, scope: &str) -> ObserveParams {
         ObserveParams {

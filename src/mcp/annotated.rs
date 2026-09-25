@@ -1,8 +1,8 @@
 use super::R2rMcpServer;
 use rmcp::{
     model::{
-        CallToolRequestParams, CallToolResponse, ListToolsResult, PaginatedRequestParams, ServerInfo,
-        Tool, ToolAnnotations,
+        CallToolRequestParams, CallToolResponse, ListToolsResult, PaginatedRequestParams,
+        ServerConfig, Tool, ToolAnnotations,
     },
     service::RequestContext,
     ErrorData, RoleServer, ServerHandler,
@@ -61,7 +61,7 @@ fn decorate_tool(mut tool: Tool) -> Tool {
 }
 
 impl ServerHandler for AnnotatedR2rMcpServer {
-    fn get_info(&self) -> ServerInfo {
+    fn get_info(&self) -> ServerConfig {
         ServerHandler::get_info(&self.inner)
     }
 

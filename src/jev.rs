@@ -8,7 +8,10 @@ fn validate_endpoint(endpoint: &str) -> Result<(), String> {
     if endpoint.starts_with("https://") {
         Ok(())
     } else {
-        Err("TYPESAFE_ENDPOINT must use https:// because the live adapter sends a bearer API key".to_string())
+        Err(
+            "TYPESAFE_ENDPOINT must use https:// because the live adapter sends a bearer API key"
+                .to_string(),
+        )
     }
 }
 
@@ -89,7 +92,8 @@ mod tests {
 
     #[test]
     fn http_endpoint_is_rejected_before_credentials_can_be_sent() {
-        let err = validate_endpoint("http://localhost:8080/systemone").expect_err("http must be rejected");
+        let err = validate_endpoint("http://localhost:8080/systemone")
+            .expect_err("http must be rejected");
         assert!(err.contains("https://"));
     }
 

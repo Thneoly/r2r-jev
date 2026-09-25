@@ -167,14 +167,20 @@ pub struct Governance {
     governing_authorization: Option<String>,
 }
 
-impl Governance {
-    pub fn new() -> Self {
+impl Default for Governance {
+    fn default() -> Self {
         Self {
             state: GovernanceState::default(),
             counters: Counters::default(),
             provenance: Vec::new(),
             governing_authorization: None,
         }
+    }
+}
+
+impl Governance {
+    pub fn new() -> Self {
+        Self::default()
     }
 
     pub fn provenance(&self) -> &[String] {

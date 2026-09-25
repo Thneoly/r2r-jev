@@ -52,6 +52,13 @@ pub struct StoredDecision {
     pub decision_id: String,
     pub domain: DomainKey,
     pub action: String,
+    /// Optional downstream resource bound to the decision. Defaults preserve
+    /// compatibility with durable snapshots created before execution binding.
+    #[serde(default)]
+    pub resource: Option<String>,
+    /// Optional task context retained for provenance and future permit binding.
+    #[serde(default)]
+    pub task: Option<String>,
     pub verdict: String,
     pub reason_code: String,
     pub governing_relation_id: Option<String>,

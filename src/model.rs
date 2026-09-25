@@ -15,6 +15,9 @@ pub struct JudgmentObserved {
 }
 
 impl JudgmentObserved {
+    /// Adapter-boundary constructor: all judgment identity/context fields remain
+    /// explicit so floating-point probabilities are normalized exactly once.
+    #[allow(clippy::too_many_arguments)]
     pub fn from_probabilities(
         provider: impl Into<String>,
         subject: impl Into<String>,
