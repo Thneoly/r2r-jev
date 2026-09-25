@@ -78,8 +78,9 @@ async fn remote_http_requires_bearer_and_accepts_mcp_initialize() -> anyhow::Res
         .await?;
         assert!(
             status_line(&unauthorized).contains("401"),
-            "expected 401, got {}",
-            status_line(&unauthorized)
+            "expected 401, got {}\n{}",
+            status_line(&unauthorized),
+            unauthorized
         );
         assert!(unauthorized.to_ascii_lowercase().contains("www-authenticate: bearer"));
 
@@ -90,7 +91,12 @@ async fn remote_http_requires_bearer_and_accepts_mcp_initialize() -> anyhow::Res
             ),
         )
         .await?;
-        assert!(status_line(&wrong_token).contains("401"));
+        assert!(
+            status_line(&wrong_token).contains("401"),
+            "expected wrong token to return 401, got {}\n{}",
+            status_line(&wrong_token),
+            wrong_token
+        );
 
         let body = serde_json::json!({
             "jsonrpc": "2.0",
