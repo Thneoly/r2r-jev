@@ -1,5 +1,7 @@
 # R2R + Jev
 
+[![M8ven Verified](https://m8ven.ai/badge/mcp/thneoly-r2r-jev-y53hg7?variant=verified)](https://m8ven.ai/mcp/thneoly-r2r-jev-y53hg7)
+
 > **Jev judges. R2R remembers, governs, and reconciles.**
 
 `r2r-jev` is a small public integration built around one rule:
