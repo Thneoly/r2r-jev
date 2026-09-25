@@ -1,9 +1,4 @@
-use rmcp::{
-    model::CallToolRequestParams,
-    object,
-    transport::TokioChildProcess,
-    ServiceExt,
-};
+use rmcp::{model::CallToolRequestParams, object, transport::TokioChildProcess, ServiceExt};
 use serde_json::Value;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -35,7 +30,11 @@ fn assert_tool_annotations(
         .as_ref()
         .unwrap_or_else(|| panic!("missing annotations for {name}"));
 
-    assert_eq!(annotations.read_only_hint, Some(read_only), "{name} readOnlyHint");
+    assert_eq!(
+        annotations.read_only_hint,
+        Some(read_only),
+        "{name} readOnlyHint"
+    );
     assert_eq!(
         annotations.destructive_hint,
         Some(destructive),
@@ -67,7 +66,9 @@ fn temp_store_path(label: &str) -> PathBuf {
 #[tokio::test]
 async fn stdio_server_runs_observe_decide_explain_outcome_and_replay() -> anyhow::Result<()> {
     let client = ()
-        .serve(TokioChildProcess::new(Command::new(env!("CARGO_BIN_EXE_r2r-mcp")))?)
+        .serve(TokioChildProcess::new(Command::new(env!(
+            "CARGO_BIN_EXE_r2r-mcp"
+        )))?)
         .await?;
 
     let tools = client.list_all_tools().await?;
@@ -111,7 +112,9 @@ async fn stdio_server_runs_observe_decide_explain_outcome_and_replay() -> anyhow
         .as_array()
         .expect("transitions")
         .iter()
-        .any(|value| value.as_str().is_some_and(|s| s.contains("Authorization:Active -> Suspended"))));
+        .any(|value| value
+            .as_str()
+            .is_some_and(|s| s.contains("Authorization:Active -> Suspended"))));
 
     let decision = client
         .call_tool(
@@ -187,9 +190,7 @@ async fn stdio_server_recovers_governance_state_across_process_restart() -> anyh
 
     let mut first_command = Command::new(env!("CARGO_BIN_EXE_r2r-mcp"));
     first_command.env("R2R_STORE_PATH", &store_path);
-    let first = ()
-        .serve(TokioChildProcess::new(first_command)?)
-        .await?;
+    let first = ().serve(TokioChildProcess::new(first_command)?).await?;
 
     let observed = first
         .call_tool(
@@ -211,9 +212,7 @@ async fn stdio_server_recovers_governance_state_across_process_restart() -> anyh
 
     let mut second_command = Command::new(env!("CARGO_BIN_EXE_r2r-mcp"));
     second_command.env("R2R_STORE_PATH", &store_path);
-    let second = ()
-        .serve(TokioChildProcess::new(second_command)?)
-        .await?;
+    let second = ().serve(TokioChildProcess::new(second_command)?).await?;
 
     let decision = second
         .call_tool(
