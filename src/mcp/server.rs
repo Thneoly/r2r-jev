@@ -75,8 +75,6 @@ impl GovernanceRuntime {
                 .entry(domain_key.clone())
                 .or_insert_with(DomainRuntime::new);
 
-            // v0.1 trust boundary: reliability/expiry are server-bound. The MCP caller
-            // cannot self-assert source reliability or corroborator count.
             let context = AdmissionContext::demo(domain.next_vtick);
             domain.next_vtick += 1;
 
@@ -175,8 +173,6 @@ impl GovernanceRuntime {
             )
         };
 
-        // Decision provenance comes from the durable store rather than volatile
-        // kernel memory, so explain/replay share the same audit source.
         let mut provenance: Vec<String> = self
             .store
             .events_for_domain(&domain_key)
@@ -288,8 +284,6 @@ impl GovernanceRuntime {
         let state_version = self.store.current_state_version(&decision.domain);
         let outcome = params.outcome.as_str().to_string();
 
-        // Outcome reports are caller supplied and therefore untrusted. v0.1 records
-        // them immutably but does not allow them to mutate relation state directly.
         self.store.record_outcome(StoredOutcome {
             outcome_id: outcome_id.clone(),
             decision_id: decision.decision_id.clone(),
@@ -469,7 +463,7 @@ fn error_json(error: String) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::schema::OutcomeKind;
+    use crate::mcp::schema::OutcomeKind;
     use super::*;
 
     fn risky_observation(subject: &str, scope: &str) -> ObserveParams {
