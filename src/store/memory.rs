@@ -1,12 +1,15 @@
-use super::{DomainKey, EventStore, StoredDecision, StoredEvent};
+use super::{DomainKey, EventStore, StoredDecision, StoredEvent, StoredOutcome};
 use std::collections::HashMap;
 
 #[derive(Debug, Default)]
 pub struct MemoryEventStore {
     events: Vec<StoredEvent>,
     decisions: Vec<StoredDecision>,
+    outcomes: Vec<StoredOutcome>,
     state_versions: HashMap<DomainKey, u64>,
+    event_counter: u64,
     decision_counter: u64,
+    outcome_counter: u64,
 }
 
 impl MemoryEventStore {
@@ -20,6 +23,10 @@ impl MemoryEventStore {
 
     pub fn decision_count(&self) -> usize {
         self.decisions.len()
+    }
+
+    pub fn outcome_count(&self) -> usize {
+        self.outcomes.len()
     }
 
     fn state_counter(&self, domain: &DomainKey) -> u64 {
@@ -38,8 +45,25 @@ impl EventStore for MemoryEventStore {
         format!("state-{counter:06}")
     }
 
+    fn next_event_id(&mut self) -> String {
+        self.event_counter += 1;
+        format!("event-{:06}", self.event_counter)
+    }
+
     fn record_event(&mut self, event: StoredEvent) {
         self.events.push(event);
+    }
+
+    fn event(&self, event_id: &str) -> Option<StoredEvent> {
+        self.events.iter().find(|e| e.event_id == event_id).cloned()
+    }
+
+    fn events_for_domain(&self, domain: &DomainKey) -> Vec<StoredEvent> {
+        self.events
+            .iter()
+            .filter(|event| &event.domain == domain)
+            .cloned()
+            .collect()
     }
 
     fn next_decision_id(&mut self) -> String {
@@ -58,8 +82,20 @@ impl EventStore for MemoryEventStore {
             .cloned()
     }
 
-    fn event(&self, event_id: &str) -> Option<StoredEvent> {
-        self.events.iter().find(|e| e.event_id == event_id).cloned()
+    fn next_outcome_id(&mut self) -> String {
+        self.outcome_counter += 1;
+        format!("outcome-{:06}", self.outcome_counter)
+    }
+
+    fn record_outcome(&mut self, outcome: StoredOutcome) {
+        self.outcomes.push(outcome);
+    }
+
+    fn outcome(&self, outcome_id: &str) -> Option<StoredOutcome> {
+        self.outcomes
+            .iter()
+            .find(|o| o.outcome_id == outcome_id)
+            .cloned()
     }
 }
 
@@ -81,9 +117,13 @@ mod tests {
     }
 
     #[test]
-    fn decision_ids_are_store_wide_and_deterministic() {
+    fn public_ids_are_store_wide_and_deterministic() {
         let mut store = MemoryEventStore::new();
+        assert_eq!(store.next_event_id(), "event-000001");
+        assert_eq!(store.next_event_id(), "event-000002");
         assert_eq!(store.next_decision_id(), "decision-000001");
         assert_eq!(store.next_decision_id(), "decision-000002");
+        assert_eq!(store.next_outcome_id(), "outcome-000001");
+        assert_eq!(store.next_outcome_id(), "outcome-000002");
     }
 }
