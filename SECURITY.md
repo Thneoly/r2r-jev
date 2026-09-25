@@ -43,13 +43,13 @@ Live mode reads `TYPESAFE_API_KEY` from the caller environment. The fixture path
 
 The project does not intentionally persist API keys or include them in governance state or provenance output.
 
-`TYPESAFE_ENDPOINT` is also caller-controlled. Setting it changes where the live adapter sends the bearer credential, so it must be treated as trusted configuration and must not be sourced from untrusted input.
+`TYPESAFE_ENDPOINT` is caller-controlled, but the live adapter rejects endpoints that do not use the `https://` scheme before constructing a request with the bearer credential. Custom HTTPS endpoints must still be treated as trusted configuration and must not be sourced from untrusted input.
 
 ### Network access
 
 The deterministic fixture path is intended to run without network access.
 
-Live Jev mode performs an outbound HTTPS request to the configured endpoint. No inbound network listener is provided by this repository.
+Live Jev mode performs an outbound request only to an HTTPS endpoint accepted by the adapter. No inbound network listener is provided by this repository.
 
 ### Filesystem access
 
@@ -77,7 +77,8 @@ Important classes of regression include:
 - expired evidence being admitted;
 - replay becoming nondeterministic;
 - human override failing to produce provenance/supervision state;
-- fixture execution unexpectedly requiring credentials or network access.
+- fixture execution unexpectedly requiring credentials or network access;
+- live endpoint configuration allowing bearer credentials to be sent over non-HTTPS transports.
 
 ## Third-party trust indexes
 
