@@ -32,12 +32,12 @@
       "name": "r2r_decide",
       "mutates_governance_state": false,
       "annotations": {
-        "readOnlyHint": true,
+        "readOnlyHint": false,
         "destructiveHint": false,
-        "idempotentHint": true,
+        "idempotentHint": false,
         "openWorldHint": false
       },
-      "description": "Evaluate a proposed action against persistent R2R governance state for its subject/scope domain without mutating relation state.",
+      "description": "Evaluate a proposed action against persistent R2R governance state without mutating relation state. The call records an auditable decision, so it is not environment-read-only under MCP ToolAnnotations semantics.",
       "input_fields": ["subject", "scope", "action", "resource", "task"]
     },
     {
@@ -80,7 +80,7 @@
   "notes": [
     "This file is a repository discovery catalog, not an alternative MCP protocol implementation.",
     "The normative runtime tool definitions are the rmcp #[tool] declarations in src/mcp/server.rs and the Rust schemas in src/mcp/schema.rs.",
-    "A real stdio integration test asserts the tools/list surface in tests/mcp_stdio.rs.",
-    "Annotations mirror MCP ToolAnnotations semantics and are intended to match the runtime behavior: observe may change governance state; record_outcome is additive audit state; decide/explain/replay are read-only."
+    "A real stdio integration test asserts the tools/list surface and annotations in tests/mcp_stdio.rs.",
+    "Annotations follow MCP ToolAnnotations environment semantics. r2r_decide does not mutate Relation Graph state but does persist an audit decision, so readOnlyHint is false."
   ]
 }
