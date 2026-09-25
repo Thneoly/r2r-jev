@@ -5,59 +5,45 @@ use super::schema::{
 use crate::admission::{AdmissionContext, PPM};
 use crate::model::JudgmentObserved;
 use crate::r2r::{Decision, Governance};
-use crate::store::memory::{MemoryEventStore, StoredDecision, StoredEvent};
+use crate::store::memory::MemoryEventStore;
+use crate::store::{DomainKey, EventStore, StoredDecision, StoredEvent};
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 use serde::Serialize;
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-struct GovernanceRuntime {
+struct DomainRuntime {
     governance: Governance,
-    store: MemoryEventStore,
     next_vtick: u64,
     projected_decision: Decision,
     governing_authorization: Option<String>,
-    bound_domain: Option<(String, String)>,
+}
+
+impl DomainRuntime {
+    fn new() -> Self {
+        Self {
+            governance: Governance::new(),
+            next_vtick: 1,
+            projected_decision: Decision::Allow,
+            governing_authorization: None,
+        }
+    }
+}
+
+struct GovernanceRuntime {
+    domains: HashMap<DomainKey, DomainRuntime>,
+    store: Box<dyn EventStore>,
 }
 
 impl GovernanceRuntime {
     fn new() -> Self {
+        Self::with_store(Box::new(MemoryEventStore::new()))
+    }
+
+    fn with_store(store: Box<dyn EventStore>) -> Self {
         Self {
-            governance: Governance::new(),
-            store: MemoryEventStore::new(),
-            next_vtick: 1,
-            projected_decision: Decision::Allow,
-            governing_authorization: None,
-            bound_domain: None,
-        }
-    }
-
-    fn ensure_or_bind_domain(&mut self, subject: &str, scope: &str) -> Result<(), String> {
-        match &self.bound_domain {
-            Some((bound_subject, bound_scope))
-                if bound_subject != subject || bound_scope != scope =>
-            {
-                Err(format!(
-                    "prototype is bound to subject={bound_subject}, scope={bound_scope}; start a separate r2r-mcp process for subject={subject}, scope={scope}"
-                ))
-            }
-            Some(_) => Ok(()),
-            None => {
-                self.bound_domain = Some((subject.to_string(), scope.to_string()));
-                Ok(())
-            }
-        }
-    }
-
-    fn ensure_domain(&self, subject: &str, scope: &str) -> Result<(), String> {
-        match &self.bound_domain {
-            Some((bound_subject, bound_scope))
-                if bound_subject != subject || bound_scope != scope =>
-            {
-                Err(format!(
-                    "prototype is bound to subject={bound_subject}, scope={bound_scope}; requested subject={subject}, scope={scope}"
-                ))
-            }
-            _ => Ok(()),
+            domains: HashMap::new(),
+            store,
         }
     }
 
@@ -65,12 +51,12 @@ impl GovernanceRuntime {
         if params.beyond_scope_ppm > PPM || params.destructive_ppm > PPM {
             return Err(format!("confidence_ppm must be in 0..={PPM}"));
         }
-        self.ensure_or_bind_domain(&params.subject, &params.scope)?;
 
+        let domain_key = DomainKey::new(params.subject.clone(), params.scope.clone());
         let judgment = JudgmentObserved {
             provider: params.provider,
-            subject: params.subject.clone(),
-            scope: params.scope.clone(),
+            subject: params.subject,
+            scope: params.scope,
             task: params.task,
             tool: params.action.clone(),
             intent: params.intent,
@@ -78,43 +64,50 @@ impl GovernanceRuntime {
             destructive_ppm: params.destructive_ppm,
         };
 
-        // v0.1 trust boundary: reliability/expiry are server-bound. The MCP caller
-        // cannot self-assert source reliability or corroborator count.
-        let context = AdmissionContext::demo(self.next_vtick);
-        self.next_vtick += 1;
+        let (outcome, relation_transitions, provenance) = {
+            let domain = self
+                .domains
+                .entry(domain_key.clone())
+                .or_insert_with(DomainRuntime::new);
 
-        let provenance_start = self.governance.provenance().len();
-        let outcome = self.governance.observe_judgment(&judgment, context);
-        self.projected_decision = outcome.decision;
+            // v0.1 trust boundary: reliability/expiry are server-bound. The MCP caller
+            // cannot self-assert source reliability or corroborator count.
+            let context = AdmissionContext::demo(domain.next_vtick);
+            domain.next_vtick += 1;
 
-        for change in &outcome.relation_changes {
-            if change.relation == "Authorization" {
-                self.governing_authorization = Some(change.id.clone());
+            let provenance_start = domain.governance.provenance().len();
+            let outcome = domain.governance.observe_judgment(&judgment, context);
+            domain.projected_decision = outcome.decision;
+
+            for change in &outcome.relation_changes {
+                if change.relation == "Authorization" {
+                    domain.governing_authorization = Some(change.id.clone());
+                }
             }
-        }
 
-        let state_version = if outcome.relation_changes.is_empty() {
-            self.store.current_state_version()
-        } else {
-            self.store.advance_state_version()
+            let relation_transitions: Vec<String> = outcome
+                .relation_changes
+                .iter()
+                .map(|change| {
+                    format!(
+                        "{}:{}:{}",
+                        change.id, change.relation, change.transition
+                    )
+                })
+                .collect();
+            let provenance = domain.governance.provenance()[provenance_start..].to_vec();
+            (outcome, relation_transitions, provenance)
         };
 
-        let relation_transitions: Vec<String> = outcome
-            .relation_changes
-            .iter()
-            .map(|change| {
-                format!(
-                    "{}:{}:{}",
-                    change.id, change.relation, change.transition
-                )
-            })
-            .collect();
+        let state_version = if outcome.relation_changes.is_empty() {
+            self.store.current_state_version(&domain_key)
+        } else {
+            self.store.advance_state_version(&domain_key)
+        };
 
-        let provenance = self.governance.provenance()[provenance_start..].to_vec();
         self.store.record_event(StoredEvent {
             event_id: outcome.event_id.clone(),
-            subject: params.subject,
-            scope: params.scope,
+            domain: domain_key,
             action: params.action,
             state_version: state_version.clone(),
             relation_transitions: relation_transitions.clone(),
@@ -142,11 +135,22 @@ impl GovernanceRuntime {
     }
 
     fn decide(&mut self, params: DecideParams) -> Result<DecideResponse, String> {
-        self.ensure_domain(&params.subject, &params.scope)?;
+        let domain_key = DomainKey::new(params.subject, params.scope);
+        let (projected_decision, governing_authorization, mut provenance) = {
+            let domain = self
+                .domains
+                .entry(domain_key.clone())
+                .or_insert_with(DomainRuntime::new);
+            (
+                domain.projected_decision,
+                domain.governing_authorization.clone(),
+                domain.governance.provenance().to_vec(),
+            )
+        };
 
         let decision_id = self.store.next_decision_id();
-        let state_version = self.store.current_state_version();
-        let (verdict, reason_code, required_next_step) = match self.projected_decision {
+        let state_version = self.store.current_state_version(&domain_key);
+        let (verdict, reason_code, required_next_step) = match projected_decision {
             Decision::Allow => ("ALLOW", "AUTHORIZATION_ACTIVE", None),
             Decision::Deny => (
                 "DENY",
@@ -155,14 +159,13 @@ impl GovernanceRuntime {
             ),
         };
 
-        let governing_relations = self
-            .governing_authorization
+        let governing_relations = governing_authorization
             .as_ref()
             .map(|relation_id| {
                 vec![GoverningRelation {
                     relation_id: relation_id.clone(),
                     relation_type: "Authorization".to_string(),
-                    state: if self.projected_decision == Decision::Deny {
+                    state: if projected_decision == Decision::Deny {
                         "Suspended".to_string()
                     } else {
                         "Active".to_string()
@@ -171,20 +174,23 @@ impl GovernanceRuntime {
             })
             .unwrap_or_default();
 
-        let mut provenance = self.governance.provenance().to_vec();
         provenance.push(format!(
-            "{} [state={}] -> {}({})",
-            decision_id, state_version, verdict, params.action
+            "{} [domain={}/{} state={}] -> {}({})",
+            decision_id,
+            domain_key.subject,
+            domain_key.scope,
+            state_version,
+            verdict,
+            params.action
         ));
 
         self.store.record_decision(StoredDecision {
             decision_id: decision_id.clone(),
-            subject: params.subject,
-            scope: params.scope,
+            domain: domain_key,
             action: params.action,
             verdict: verdict.to_string(),
             reason_code: reason_code.to_string(),
-            governing_relation_id: self.governing_authorization.clone(),
+            governing_relation_id: governing_authorization,
             state_version: state_version.clone(),
             provenance,
         });
@@ -207,22 +213,28 @@ impl GovernanceRuntime {
 
         let summary = match decision.verdict.as_str() {
             "DENY" => format!(
-                "{} was denied because persistent authorization state was suspended at {}.",
-                decision.action, decision.state_version
+                "{} was denied because persistent authorization state was suspended at {} for {}/{}.",
+                decision.action,
+                decision.state_version,
+                decision.domain.subject,
+                decision.domain.scope
             ),
             _ => format!(
-                "{} was allowed because no suspended authorization governed the action at {}.",
-                decision.action, decision.state_version
+                "{} was allowed because no suspended authorization governed the action at {} for {}/{}.",
+                decision.action,
+                decision.state_version,
+                decision.domain.subject,
+                decision.domain.scope
             ),
         };
 
         Ok(ExplainResponse {
-            decision_id: decision.decision_id.clone(),
-            verdict: decision.verdict.clone(),
-            reason_code: decision.reason_code.clone(),
-            state_version: decision.state_version.clone(),
-            governing_relation_id: decision.governing_relation_id.clone(),
-            causal_chain: decision.provenance.clone(),
+            decision_id: decision.decision_id,
+            verdict: decision.verdict,
+            reason_code: decision.reason_code,
+            state_version: decision.state_version,
+            governing_relation_id: decision.governing_relation_id,
+            causal_chain: decision.provenance,
             summary,
         })
     }
@@ -235,8 +247,12 @@ pub struct R2rMcpServer {
 
 impl R2rMcpServer {
     pub fn new() -> Self {
+        Self::with_store(Box::new(MemoryEventStore::new()))
+    }
+
+    pub fn with_store(store: Box<dyn EventStore>) -> Self {
         Self {
-            runtime: Arc::new(Mutex::new(GovernanceRuntime::new())),
+            runtime: Arc::new(Mutex::new(GovernanceRuntime::with_store(store))),
         }
     }
 
@@ -264,21 +280,21 @@ impl Default for R2rMcpServer {
 #[tool_router(server_handler)]
 impl R2rMcpServer {
     #[tool(
-        description = "Submit an untrusted probabilistic observation. The server binds trusted admission metadata, runs Evidence Admission, and applies only admitted evidence to R2R governance state."
+        description = "Submit an untrusted probabilistic observation. The server binds trusted admission metadata, runs Evidence Admission, and applies only admitted evidence to the subject/scope R2R governance domain."
     )]
     fn r2r_observe(&self, Parameters(params): Parameters<ObserveParams>) -> String {
         self.with_runtime(|runtime| runtime.observe(params))
     }
 
     #[tool(
-        description = "Evaluate a proposed action against the current persistent R2R governance state without mutating relation state."
+        description = "Evaluate a proposed action against the persistent R2R governance state for its subject/scope domain without mutating relation state."
     )]
     fn r2r_decide(&self, Parameters(params): Parameters<DecideParams>) -> String {
         self.with_runtime(|runtime| runtime.decide(params))
     }
 
     #[tool(
-        description = "Explain a previously issued R2R decision using its recorded state version and causal provenance chain."
+        description = "Explain a previously issued R2R decision using its recorded domain, state version, and causal provenance chain."
     )]
     fn r2r_explain(&self, Parameters(params): Parameters<ExplainParams>) -> String {
         self.with_runtime(|runtime| runtime.explain(params))
@@ -294,11 +310,11 @@ fn error_json(error: String) -> String {
 mod tests {
     use super::*;
 
-    fn risky_observation() -> ObserveParams {
+    fn risky_observation(subject: &str, scope: &str) -> ObserveParams {
         ObserveParams {
             provider: "fixture:jev-style".to_string(),
-            subject: "agent:coder-1".to_string(),
-            scope: "repo:alpha".to_string(),
+            subject: subject.to_string(),
+            scope: scope.to_string(),
             task: "fix login redirect".to_string(),
             action: "github.merge_pull_request".to_string(),
             intent: "merge unrelated changes".to_string(),
@@ -307,10 +323,22 @@ mod tests {
         }
     }
 
+    fn decide(subject: &str, scope: &str) -> DecideParams {
+        DecideParams {
+            subject: subject.to_string(),
+            scope: scope.to_string(),
+            action: "github.merge_pull_request".to_string(),
+            resource: Some("pr:42".to_string()),
+            task: Some("fix login redirect".to_string()),
+        }
+    }
+
     #[test]
     fn observe_then_decide_then_explain_is_causal() {
         let mut runtime = GovernanceRuntime::new();
-        let observed = runtime.observe(risky_observation()).expect("observe");
+        let observed = runtime
+            .observe(risky_observation("agent:coder-1", "repo:alpha"))
+            .expect("observe");
         assert_eq!(observed.state_version, "state-000001");
         assert!(observed
             .relation_transitions
@@ -318,13 +346,7 @@ mod tests {
             .any(|change| change.contains("Authorization:Active -> Suspended")));
 
         let decision = runtime
-            .decide(DecideParams {
-                subject: "agent:coder-1".to_string(),
-                scope: "repo:alpha".to_string(),
-                action: "github.merge_pull_request".to_string(),
-                resource: Some("pr:42".to_string()),
-                task: Some("fix login redirect".to_string()),
-            })
+            .decide(decide("agent:coder-1", "repo:alpha"))
             .expect("decide");
         assert_eq!(decision.decision, "DENY");
         assert_eq!(decision.state_version, "state-000001");
@@ -342,9 +364,11 @@ mod tests {
     }
 
     #[test]
-    fn rejected_observation_does_not_advance_relation_state_version() {
+    fn rejected_observation_does_not_advance_domain_state_version() {
         let mut runtime = GovernanceRuntime::new();
-        let first = runtime.observe(risky_observation()).expect("observe risky");
+        let first = runtime
+            .observe(risky_observation("agent:coder-1", "repo:alpha"))
+            .expect("observe risky");
         assert_eq!(first.state_version, "state-000001");
 
         let benign = runtime
@@ -365,20 +389,33 @@ mod tests {
     }
 
     #[test]
-    fn prototype_refuses_cross_domain_state_bleed() {
+    fn domains_are_isolated_inside_one_mcp_process() {
         let mut runtime = GovernanceRuntime::new();
-        runtime.observe(risky_observation()).expect("observe");
+        runtime
+            .observe(risky_observation("agent:coder-1", "repo:alpha"))
+            .expect("observe alpha");
 
-        let err = runtime
-            .decide(DecideParams {
-                subject: "agent:coder-2".to_string(),
-                scope: "repo:beta".to_string(),
-                action: "github.merge_pull_request".to_string(),
-                resource: None,
-                task: None,
-            })
-            .expect_err("different domain must fail closed");
+        let alpha = runtime
+            .decide(decide("agent:coder-1", "repo:alpha"))
+            .expect("decide alpha");
+        let beta = runtime
+            .decide(decide("agent:coder-2", "repo:beta"))
+            .expect("decide beta");
 
-        assert!(err.contains("prototype is bound"));
+        assert_eq!(alpha.decision, "DENY");
+        assert_eq!(alpha.state_version, "state-000001");
+        assert_eq!(beta.decision, "ALLOW");
+        assert_eq!(beta.state_version, "state-000000");
+
+        let beta_observed = runtime
+            .observe(risky_observation("agent:coder-2", "repo:beta"))
+            .expect("observe beta");
+        assert_eq!(beta_observed.state_version, "state-000001");
+
+        let alpha_again = runtime
+            .decide(decide("agent:coder-1", "repo:alpha"))
+            .expect("decide alpha again");
+        assert_eq!(alpha_again.decision, "DENY");
+        assert_eq!(alpha_again.state_version, "state-000001");
     }
 }
