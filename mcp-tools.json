@@ -4,6 +4,7 @@
   "server_binary": "r2r-mcp",
   "source": {
     "tool_router": "src/mcp/server.rs",
+    "protocol_decorator": "src/mcp/annotated.rs",
     "schemas": "src/mcp/schema.rs"
   },
   "tools": [
@@ -39,6 +40,19 @@
       },
       "description": "Evaluate a proposed action against persistent R2R governance state without mutating relation state. The call records an auditable decision, so it is not environment-read-only under MCP ToolAnnotations semantics.",
       "input_fields": ["subject", "scope", "action", "resource", "task"]
+    },
+    {
+      "name": "r2r_validate_execution",
+      "requires": ["R2R_STORE_PATH"],
+      "mutates_governance_state": false,
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "description": "Validate that an ALLOW decision is still executable by binding the attempted action to the exact durable R2R state_version from which the decision was derived. Stale, denied, unknown, or action-mismatched decisions fail closed.",
+      "input_fields": ["decision_id", "action", "expected_state_version"]
     },
     {
       "name": "r2r_explain",
@@ -79,8 +93,9 @@
   ],
   "notes": [
     "This file is a repository discovery catalog, not an alternative MCP protocol implementation.",
-    "The normative runtime tool definitions are the rmcp #[tool] declarations in src/mcp/server.rs and the Rust schemas in src/mcp/schema.rs.",
-    "A real stdio integration test asserts the tools/list surface and annotations in tests/mcp_stdio.rs.",
+    "The normative runtime tools are implemented by the rmcp router in src/mcp/server.rs plus the protocol decorator in src/mcp/annotated.rs.",
+    "r2r_validate_execution is exposed only in durable mode when R2R_STORE_PATH is configured.",
+    "Real stdio integration tests assert the tool surface and execution-binding behavior.",
     "Annotations follow MCP ToolAnnotations environment semantics. r2r_decide does not mutate Relation Graph state but does persist an audit decision, so readOnlyHint is false."
   ]
 }
