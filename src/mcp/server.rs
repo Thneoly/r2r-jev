@@ -40,6 +40,7 @@ struct GovernanceRuntime {
     store: Box<dyn EventStore>,
 }
 
+#[allow(dead_code)]
 impl GovernanceRuntime {
     fn new() -> Self {
         Self::try_with_store(Box::new(MemoryEventStore::new()))

@@ -1,6 +1,7 @@
 use super::AnnotatedR2rMcpServer;
 use crate::store::json_file::JsonFileEventStore;
 use crate::store::EventStore;
+#[allow(deprecated)]
 use rmcp::{
     model::{
         CallToolRequestParams, CallToolResponse, ListToolsResult, PaginatedRequestParams,
@@ -102,6 +103,7 @@ fn denied_tool_response(message: String) -> CallToolResponse {
 }
 
 impl ServerHandler for RemotePrincipalServer {
+    #[allow(deprecated)]
     fn get_info(&self) -> ServerInfo {
         ServerHandler::get_info(&self.inner)
     }

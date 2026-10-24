@@ -14,6 +14,7 @@ pub struct ObserveParams {
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[allow(dead_code)]
 pub struct DecideParams {
     pub subject: String,
     pub scope: String,

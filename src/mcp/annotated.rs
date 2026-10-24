@@ -1,6 +1,7 @@
 use super::R2rMcpServer;
 use crate::enforcement::{validate_execution, ExecutionBindingRequest};
 use crate::store::json_file::JsonFileEventStore;
+#[allow(deprecated)]
 use rmcp::{
     model::{
         CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, ListToolsResult,
@@ -155,6 +156,7 @@ fn decorate_tool(mut tool: Tool) -> Tool {
 }
 
 impl ServerHandler for AnnotatedR2rMcpServer {
+    #[allow(deprecated)]
     fn get_info(&self) -> ServerInfo {
         ServerHandler::get_info(&self.inner)
     }

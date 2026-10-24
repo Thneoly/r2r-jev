@@ -1,5 +1,6 @@
 pub mod admission;
 pub mod enforcement;
+pub mod gateway;
 pub mod mcp;
 pub mod model;
 pub mod r2r;

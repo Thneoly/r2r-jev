@@ -1,0 +1,12 @@
+{
+  "upstreams": [
+    {
+      "name": "r2r-control-plane",
+      "command": "cargo",
+      "args": ["run", "--quiet", "--bin", "r2r-mcp"],
+      "env": {}
+    }
+  ],
+  "init_timeout_ms": 180000,
+  "call_timeout_ms": 120000
+}
