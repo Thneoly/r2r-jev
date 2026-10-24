@@ -190,17 +190,16 @@ mod tests {
         let (store, decision_id) = store_with_decision("ALLOW");
         let result = validate_execution(
             &store,
-            &ExecutionBindingRequest::new(
-                decision_id,
-                "github.merge_pull_request",
-                "state-000001",
-            ),
+            &ExecutionBindingRequest::new(decision_id, "github.merge_pull_request", "state-000001"),
         )
         .expect("validation");
 
         assert!(result.allowed);
         assert_eq!(result.reason_code, "EXECUTION_ALLOWED");
-        assert_eq!(result.current_state_version.as_deref(), Some("state-000001"));
+        assert_eq!(
+            result.current_state_version.as_deref(),
+            Some("state-000001")
+        );
     }
 
     #[test]
@@ -211,18 +210,20 @@ mod tests {
 
         let result = validate_execution(
             &store,
-            &ExecutionBindingRequest::new(
-                decision_id,
-                "github.merge_pull_request",
-                "state-000001",
-            ),
+            &ExecutionBindingRequest::new(decision_id, "github.merge_pull_request", "state-000001"),
         )
         .expect("validation");
 
         assert!(!result.allowed);
         assert_eq!(result.reason_code, "STATE_VERSION_STALE");
-        assert_eq!(result.decision_state_version.as_deref(), Some("state-000001"));
-        assert_eq!(result.current_state_version.as_deref(), Some("state-000002"));
+        assert_eq!(
+            result.decision_state_version.as_deref(),
+            Some("state-000001")
+        );
+        assert_eq!(
+            result.current_state_version.as_deref(),
+            Some("state-000002")
+        );
     }
 
     #[test]
@@ -230,11 +231,7 @@ mod tests {
         let (store, decision_id) = store_with_decision("ALLOW");
         let result = validate_execution(
             &store,
-            &ExecutionBindingRequest::new(
-                decision_id,
-                "github.merge_pull_request",
-                "state-000999",
-            ),
+            &ExecutionBindingRequest::new(decision_id, "github.merge_pull_request", "state-000999"),
         )
         .expect("validation");
 
@@ -247,11 +244,7 @@ mod tests {
         let (store, decision_id) = store_with_decision("DENY");
         let result = validate_execution(
             &store,
-            &ExecutionBindingRequest::new(
-                decision_id,
-                "github.merge_pull_request",
-                "state-000001",
-            ),
+            &ExecutionBindingRequest::new(decision_id, "github.merge_pull_request", "state-000001"),
         )
         .expect("validation");
 

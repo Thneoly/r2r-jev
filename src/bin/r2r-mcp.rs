@@ -1,6 +1,6 @@
-use rmcp::{transport::stdio, ServiceExt};
 use r2r_jev::mcp::{AnnotatedR2rMcpServer, R2rMcpServer};
 use r2r_jev::store::json_file::JsonFileEventStore;
+use rmcp::{transport::stdio, ServiceExt};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

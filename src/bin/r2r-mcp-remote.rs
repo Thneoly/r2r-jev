@@ -6,11 +6,11 @@ use axum::{
     response::{IntoResponse, Response},
     Router,
 };
+use r2r_jev::mcp::{AnnotatedR2rMcpServer, R2rMcpServer, RemotePrincipalServer};
+use r2r_jev::store::json_file::JsonFileEventStore;
 use rmcp::transport::streamable_http_server::{
     session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
 };
-use r2r_jev::mcp::{AnnotatedR2rMcpServer, RemotePrincipalServer, R2rMcpServer};
-use r2r_jev::store::json_file::JsonFileEventStore;
 use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -94,10 +94,9 @@ async fn security_middleware(
 ) -> Response {
     if !security.authenticate(request.headers().get(header::AUTHORIZATION)) {
         let mut response = (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
-        response.headers_mut().insert(
-            header::WWW_AUTHENTICATE,
-            HeaderValue::from_static("Bearer"),
-        );
+        response
+            .headers_mut()
+            .insert(header::WWW_AUTHENTICATE, HeaderValue::from_static("Bearer"));
         return response;
     }
     if !security.consume_rate_limit() {
@@ -169,8 +168,7 @@ async fn main() -> anyhow::Result<()> {
     let service = StreamableHttpService::new(
         move || Ok(remote.clone()),
         LocalSessionManager::default().into(),
-        StreamableHttpServerConfig::default()
-            .with_cancellation_token(cancellation.child_token()),
+        StreamableHttpServerConfig::default().with_cancellation_token(cancellation.child_token()),
     );
 
     let router = Router::new()

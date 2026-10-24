@@ -177,18 +177,37 @@ and the strong-trusted false-positive band is honestly unchanged.
 Open research questions — including the eight problems admission v0.1 does not
 solve — live on the [Discussions board](https://github.com/Thneoly/r2r-jev/discussions/1).
 
-## Live Jev
+## Live judges
 
-Set a TypeSafe API key:
+The live adapter speaks the `/v1/systemone` wire format — originated by Jev
+and now shared by several open stacks — so the judge is a configuration
+choice, not a dependency. Built-in providers: `jev` (TypeSafe, default) and
+`d3` (vLLM Semantic Router, free API key at decision.vllm-sr.ai). Any other
+`/v1/systemone` server can be pointed at via `TYPESAFE_ENDPOINT` /
+`DECISION_ENDPOINT`.
+
+Set an API key for the provider you use:
 
 ```bash
-export TYPESAFE_API_KEY=...
+export TYPESAFE_API_KEY=...     # provider jev (default)
+# or
+export DECISION_API_KEY=...     # provider d3
 ```
 
 Then run:
 
 ```bash
 cargo run -- live \
+  --task "Fix the login redirect bug" \
+  --tool "merge_pull_request" \
+  --scope "repo-alpha" \
+  --intent "Merge a pull request containing unrelated repository changes"
+```
+
+Switch judge by name — same governance path either way:
+
+```bash
+cargo run -- live --provider d3 \
   --task "Fix the login redirect bug" \
   --tool "merge_pull_request" \
   --scope "repo-alpha" \

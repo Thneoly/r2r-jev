@@ -59,17 +59,19 @@ impl AnnotatedR2rMcpServer {
         };
 
         let arguments = request.arguments.unwrap_or_default();
-        let params: ValidateExecutionParams =
-            match serde_json::from_value(Value::Object(arguments)) {
-                Ok(params) => params,
-                Err(error) => {
-                    return tool_error(format!("invalid r2r_validate_execution arguments: {error}"));
-                }
-            };
+        let params: ValidateExecutionParams = match serde_json::from_value(Value::Object(arguments))
+        {
+            Ok(params) => params,
+            Err(error) => {
+                return tool_error(format!("invalid r2r_validate_execution arguments: {error}"));
+            }
+        };
 
         let store = match JsonFileEventStore::open(path) {
             Ok(store) => store,
-            Err(error) => return tool_error(format!("failed to open durable event store: {error}")),
+            Err(error) => {
+                return tool_error(format!("failed to open durable event store: {error}"))
+            }
         };
 
         let result = match validate_execution(
@@ -85,9 +87,9 @@ impl AnnotatedR2rMcpServer {
         };
 
         match serde_json::to_string_pretty(&result) {
-            Ok(json) => CallToolResponse::Complete(CallToolResult::success(vec![
-                ContentBlock::text(json),
-            ])),
+            Ok(json) => {
+                CallToolResponse::Complete(CallToolResult::success(vec![ContentBlock::text(json)]))
+            }
             Err(error) => tool_error(format!("failed to serialize validation result: {error}")),
         }
     }
@@ -111,7 +113,9 @@ fn validation_tool() -> Tool {
 }
 
 fn tool_error(message: impl Into<String>) -> CallToolResponse {
-    CallToolResponse::Complete(CallToolResult::error(vec![ContentBlock::text(message.into())]))
+    CallToolResponse::Complete(CallToolResult::error(vec![ContentBlock::text(
+        message.into(),
+    )]))
 }
 
 fn annotations_for(name: &str) -> Option<ToolAnnotations> {

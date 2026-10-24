@@ -444,8 +444,8 @@ impl GovernanceRuntime {
         }
 
         let replayed_state_version = format!("state-{replayed_state_counter:06}");
-        let replay_match = first_divergent_event.is_none()
-            && recorded_state_version == replayed_state_version;
+        let replay_match =
+            first_divergent_event.is_none() && recorded_state_version == replayed_state_version;
 
         Ok(ReplayResponse {
             replay_match,
@@ -564,8 +564,8 @@ fn error_json(error: String) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::mcp::schema::OutcomeKind;
     use super::*;
+    use crate::mcp::schema::OutcomeKind;
 
     fn risky_observation(subject: &str, scope: &str) -> ObserveParams {
         ObserveParams {

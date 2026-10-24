@@ -1,9 +1,4 @@
-use rmcp::{
-    model::CallToolRequestParams,
-    object,
-    transport::TokioChildProcess,
-    ServiceExt,
-};
+use rmcp::{model::CallToolRequestParams, object, transport::TokioChildProcess, ServiceExt};
 use serde_json::Value;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -35,9 +30,7 @@ async fn durable_mcp_validation_rejects_stale_allow_decision() -> anyhow::Result
     let mut command = Command::new(env!("CARGO_BIN_EXE_r2r-mcp"));
     command.env("R2R_STORE_PATH", &store_path);
 
-    let client = ()
-        .serve(TokioChildProcess::new(command)?)
-        .await?;
+    let client = ().serve(TokioChildProcess::new(command)?).await?;
 
     let tools = client.list_all_tools().await?;
     let validate_tool = tools

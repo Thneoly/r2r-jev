@@ -53,9 +53,12 @@ open research questions, not PR material — open a Discussion first.
 
 ## Track 3 — Adapters and fixtures
 
-The live Jev adapter is deliberately thin and isolated from deterministic
-governance semantics. Keep it that way. New fixtures must be plain ASCII
-JSON so the deterministic path stays byte-stable across platforms.
+The live judge adapter is deliberately thin and isolated from deterministic
+governance semantics. Keep it that way. Any server speaking the
+`/v1/systemone` format can be added as a named provider in
+`src/jev.rs` — one match arm plus endpoint/model/key env names. New fixtures
+must be plain ASCII JSON so the deterministic path stays byte-stable across
+platforms.
 
 ## Track 4 — Analysis and write-ups
 

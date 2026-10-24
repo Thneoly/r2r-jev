@@ -96,6 +96,7 @@ fn run_live(args: &mut impl Iterator<Item = String>) -> Result<(), String> {
     let mut subject = "coder".to_string();
     let mut source_reliability_ppm: u32 = 850_000;
     let mut corroborators: u8 = 0;
+    let mut provider_name = "jev".to_string();
 
     while let Some(flag) = args.next() {
         let value = args
@@ -120,13 +121,19 @@ fn run_live(args: &mut impl Iterator<Item = String>) -> Result<(), String> {
                     .parse::<u8>()
                     .map_err(|_| "--corroborators must be an integer 0..255".to_string())?;
             }
+            "--provider" => provider_name = value,
             _ => return Err(format!("unknown argument: {flag}")),
         }
     }
 
-    let api_key = std::env::var("TYPESAFE_API_KEY")
-        .map_err(|_| "TYPESAFE_API_KEY is required for live mode".to_string())?;
-    let judgment = jev::judge_live(&api_key, &subject, &scope, &task, &tool, &intent)?;
+    let provider = jev::JudgeProvider::by_name(&provider_name)?;
+    let api_key = std::env::var(provider.api_key_env).map_err(|_| {
+        format!(
+            "{} is required for live mode with provider {:?}",
+            provider.api_key_env, provider_name
+        )
+    })?;
+    let judgment = jev::judge_live(&provider, &api_key, &subject, &scope, &task, &tool, &intent)?;
 
     // This is configured trust metadata, not a probability returned by Jev and
     // not a claim about measured model accuracy.

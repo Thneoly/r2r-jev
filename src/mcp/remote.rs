@@ -2,7 +2,10 @@ use super::AnnotatedR2rMcpServer;
 use crate::store::json_file::JsonFileEventStore;
 use crate::store::EventStore;
 use rmcp::{
-    model::{CallToolRequestParams, CallToolResponse, ListToolsResult, PaginatedRequestParams, ServerInfo, Tool},
+    model::{
+        CallToolRequestParams, CallToolResponse, ListToolsResult, PaginatedRequestParams,
+        ServerInfo, Tool,
+    },
     service::RequestContext,
     ErrorData, RoleServer, ServerHandler,
 };
@@ -73,7 +76,9 @@ impl RemotePrincipalServer {
         if self.allowed_scopes.contains(scope) {
             Ok(())
         } else {
-            Err(format!("scope not authorized for remote principal: {scope}"))
+            Err(format!(
+                "scope not authorized for remote principal: {scope}"
+            ))
         }
     }
 
@@ -140,7 +145,10 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("clock")
             .as_nanos();
-        std::env::temp_dir().join(format!("r2r-remote-auth-{}-{nanos}.json", std::process::id()))
+        std::env::temp_dir().join(format!(
+            "r2r-remote-auth-{}-{nanos}.json",
+            std::process::id()
+        ))
     }
 
     fn server(path: &PathBuf) -> RemotePrincipalServer {
@@ -161,7 +169,10 @@ mod tests {
         let path = temp_store_path();
         let server = server(&path);
         let mut arguments = Map::new();
-        arguments.insert("subject".to_string(), Value::String("agent:spoofed".to_string()));
+        arguments.insert(
+            "subject".to_string(),
+            Value::String("agent:spoofed".to_string()),
+        );
         arguments.insert("scope".to_string(), Value::String("repo:alpha".to_string()));
         let mut request = CallToolRequestParams::new("r2r_decide").with_arguments(arguments);
         server.authorize_request(&mut request).expect("authorized");
