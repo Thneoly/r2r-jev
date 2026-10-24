@@ -250,6 +250,56 @@ cargo run -- live \
 
 `source_reliability_ppm` is **configured trust metadata**, not a value returned by Jev and not a claim about measured model accuracy.
 
+## Gateway — enforcement for MCP tool calls
+
+The repository ships three integration shapes. The fixture demo and control
+plane are advisory; the **gateway** is the enforcement leg — traffic physically
+passes through it, whether or not the agent harness cooperates.
+
+| Shape | What it does | When to use |
+|---|---|---|
+| `cargo run -- fixture` | Deterministic three-act demo (zero dependencies) | Learn the governance flow |
+| `cargo run --bin r2r-mcp` | Control plane MCP server (`r2r_observe/decide/explain/replay`) | Agent voluntarily consults governance before acting |
+| `cargo run --bin r2r-gateway -- gateway.json` | **MCP proxy that gates every tools/call** | Enforcement: agent cannot bypass governance |
+
+The gateway spawns configured upstream MCP servers as child processes, merges
+their tool catalogs, and intercepts every `tools/call`:
+
+```text
+Agent ──stdio──▶ r2r-gateway ──spawn──▶ upstream MCP servers
+                    │
+                    ├─ r2r_observe/decide/... pass through (governance surface)
+                    │
+                    └─ any other tool:
+                         1. r2r_decide on the control plane
+                         2a. ALLOW → forward to upstream → record "executed"
+                         2b. DENY  → isError + evidence text → record "blocked"
+                         2c. auth failure → DENY fail-closed → record "blocked"
+```
+
+Every gated call leaves a three-layer audit trail in the EventStore:
+`events` (judgments admitted) → `decisions` (authorize checks) →
+`outcomes` (what actually happened) — all replayable via `r2r_replay`.
+
+**Deny evidence flows back to the agent context** (E6 pattern):
+
+```text
+DENY: AUTHORIZATION_SUSPENDED for sv-003/read_file
+  governing: Authorization authorization-0001 = Suspended
+  decision: decision-0002
+  repair: call r2r_observe with a human_override event...
+```
+
+Quick start (config: [`gateway.example.json`](gateway.example.json)):
+
+```bash
+cargo run --bin r2r-gateway -- gateway.example.json
+```
+
+Then point your agent's MCP config at the gateway's stdio endpoint. On
+Windows, upstream children are assigned to a kill-on-close Job Object —
+if the gateway dies, every upstream and their descendants terminate too.
+
 ## Core design rule
 
 ```text
@@ -330,27 +380,34 @@ Neighboring projects answer different questions:
 ```text
 .
 ├── src/
-│   ├── admission.rs   # shared Evidence Admission v0.1 semantics
-│   ├── main.rs        # three-act demo CLI (fixture + live)
-│   ├── jev.rs         # Jev adapter
-│   ├── model.rs       # typed judgment boundary objects
-│   ├── r2r.rs         # deterministic demo relation-governance kernel
+│   ├── admission.rs    # shared Evidence Admission v0.1 semantics
+│   ├── main.rs         # three-act demo CLI (fixture + live, --provider)
+│   ├── jev.rs          # judge adapter + provider registry (jev, d3)
+│   ├── model.rs        # typed judgment boundary objects
+│   ├── r2r.rs          # deterministic demo relation-governance kernel
+│   ├── enforcement.rs  # execution↔decision binding (state-version check)
+│   ├── mcp/            # control plane: rmcp server (observe/decide/…)
+│   ├── gateway/        # enforcement proxy: spawn upstreams, gate calls,
+│   │                   # record outcomes, kill-on-close Job Object
+│   ├── store/          # EventStore: events + decisions + outcomes
 │   └── bin/
-│       ├── admission.rs # Admission v0.1 executable cases
-│       └── compare.rs   # stateless vs stateful baseline experiment
-├── demo/
-│   └── fixtures/
-├── scripts/
-│   └── make_demo_gif.py
+│       ├── admission.rs      # Admission v0.1 reference cases A–G
+│       ├── admission-compare.rs # two-arm baseline experiment
+│       ├── r2r-mcp.rs        # control plane MCP server (stdio)
+│       ├── r2r-mcp-remote.rs # authenticated remote profile
+│       ├── r2r-gateway.rs    # MCP enforcement proxy
+│       └── r2r-enforce.rs    # execution binding CLI
+├── demo/fixtures/      # recorded judgments (jev-style, d3-recorded)
+├── scripts/make_demo_gif.py
 ├── experiments/
-│   ├── evidence-admission-v0.1/
+│   ├── evidence-admission-v0.1/  # four traces, baseline vs admission
 │   └── stateless-vs-stateful/
-├── docs/
-│   ├── architecture.md
-│   ├── evidence-admission-semantics-v0.1.md
-│   └── why-r2r-after-jev.md
-└── .github/workflows/
-    └── ci.yml
+├── gateway.example.json
+├── CONTRIBUTING.md
+└── docs/
+    ├── architecture.md
+    ├── evidence-admission-semantics-v0.1.md
+    └── why-r2r-after-jev.md
 ```
 
 ## Relationship to R2R
