@@ -229,6 +229,46 @@ impl GatewayServer {
             state_version,
         })
     }
+
+    /// Record the execution outcome of a gated call on the control plane.
+    /// Failures are logged to stderr but never block the tool response.
+    async fn record_outcome(&self, decision_id: &str, outcome: &str, detail: Option<String>) {
+        let Some(cp_idx) = self.control_plane else {
+            return;
+        };
+        let cp = &self.upstreams[cp_idx];
+        let mut args = object!({
+            "decision_id": decision_id,
+            "outcome": outcome,
+        });
+        if let Some(d) = detail {
+            let _ = args.insert("detail".into(), serde_json::Value::String(d));
+        }
+        let request = CallToolRequestParams::new("r2r_record_outcome").with_arguments(args);
+        let result = tokio::time::timeout(self.call_timeout, cp.client.call_tool(request)).await;
+        match result {
+            Ok(Ok(response)) if response.is_error != Some(true) => {}
+            Ok(Ok(response)) => {
+                let text = response
+                    .content
+                    .first()
+                    .and_then(|c| c.as_text())
+                    .map(|t| t.text.clone())
+                    .unwrap_or_default();
+                eprintln!(
+                    "[r2r-gateway:audit] record_outcome({decision_id}, {outcome}) error: {text}"
+                );
+            }
+            Ok(Err(error)) => {
+                eprintln!(
+                    "[r2r-gateway:audit] record_outcome({decision_id}, {outcome}) transport error: {error}"
+                );
+            }
+            Err(_) => {
+                eprintln!("[r2r-gateway:audit] record_outcome({decision_id}, {outcome}) timed out");
+            }
+        }
+    }
 }
 
 fn gateway_error(message: String) -> ErrorData {
@@ -292,12 +332,17 @@ impl ServerHandler for GatewayServer {
             Ok(auth) => auth,
             Err(error) => {
                 // Authorization infrastructure failure: fail closed.
+                // No decision_id available — record with a placeholder.
+                self.record_outcome("?", "blocked", Some(error.clone()))
+                    .await;
                 return Ok(deny_result(format!(
                     "DENY (fail-closed): authorization check failed: {error}"
                 )));
             }
         };
         if !auth.allowed {
+            self.record_outcome(&auth.decision_id, "blocked", None)
+                .await;
             return Ok(deny_result(auth.evidence_text(&name)));
         }
 
@@ -309,16 +354,37 @@ impl ServerHandler for GatewayServer {
         }
         let call = tokio::time::timeout(self.call_timeout, upstream.client.call_tool(forwarded));
         match call.await {
-            Ok(Ok(result)) => Ok(CallToolResponse::Complete(result)),
-            Ok(Err(error)) => Err(gateway_error(format!(
-                "upstream {} call {name} failed: {error}",
-                upstream.name
-            ))),
-            Err(_) => Err(gateway_error(format!(
-                "upstream {} call {name} timed out after {}ms",
-                upstream.name,
-                self.call_timeout.as_millis()
-            ))),
+            Ok(Ok(result)) => {
+                let upstream_error = result.is_error == Some(true);
+                let outcome = if upstream_error { "failed" } else { "executed" };
+                self.record_outcome(&auth.decision_id, outcome, None).await;
+                Ok(CallToolResponse::Complete(result))
+            }
+            Ok(Err(error)) => {
+                self.record_outcome(
+                    &auth.decision_id,
+                    "failed",
+                    Some(format!("upstream {name} error: {error}")),
+                )
+                .await;
+                Err(gateway_error(format!(
+                    "upstream {} call {name} failed: {error}",
+                    upstream.name
+                )))
+            }
+            Err(_) => {
+                self.record_outcome(
+                    &auth.decision_id,
+                    "failed",
+                    Some(format!("upstream {name} timed out")),
+                )
+                .await;
+                Err(gateway_error(format!(
+                    "upstream {} call {name} timed out after {}ms",
+                    upstream.name,
+                    self.call_timeout.as_millis()
+                )))
+            }
         }
     }
 }
