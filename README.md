@@ -68,6 +68,19 @@ Is this judgment sufficiently supported to enter governance at all?
 
 That separation prevents a probabilistic score from silently becoming authority.
 
+## Three integration shapes
+
+| Shape | Command | What it does |
+|---|---|---|
+| **Deterministic demo** | `cargo run -- fixture` | Three-act governance flow (zero dependencies) |
+| **Control plane** | `cargo run --bin r2r-mcp` | Advisory MCP server (`r2r_observe/decide/explain/replay`) |
+| **Enforcement gateway** | `cargo run --bin r2r-gateway -- gateway.example.json` | **MCP proxy that gates every tools/call** |
+
+The demo and control plane are advisory; the **gateway** is the enforcement
+leg — traffic physically passes through it, whether or not the agent
+harness cooperates. See [Gateway](#gateway--enforcement-for-mcp-tool-calls)
+below for the full flow.
+
 ## Quick start — no API key
 
 The repository ships with a recorded Jev-style fixture so the full governance path is runnable without network access:
@@ -251,16 +264,6 @@ cargo run -- live \
 `source_reliability_ppm` is **configured trust metadata**, not a value returned by Jev and not a claim about measured model accuracy.
 
 ## Gateway — enforcement for MCP tool calls
-
-The repository ships three integration shapes. The fixture demo and control
-plane are advisory; the **gateway** is the enforcement leg — traffic physically
-passes through it, whether or not the agent harness cooperates.
-
-| Shape | What it does | When to use |
-|---|---|---|
-| `cargo run -- fixture` | Deterministic three-act demo (zero dependencies) | Learn the governance flow |
-| `cargo run --bin r2r-mcp` | Control plane MCP server (`r2r_observe/decide/explain/replay`) | Agent voluntarily consults governance before acting |
-| `cargo run --bin r2r-gateway -- gateway.json` | **MCP proxy that gates every tools/call** | Enforcement: agent cannot bypass governance |
 
 The gateway spawns configured upstream MCP servers as child processes, merges
 their tool catalogs, and intercepts every `tools/call`:
