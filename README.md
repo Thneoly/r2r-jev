@@ -121,6 +121,26 @@ Provenance
 
 Ids and virtual ticks are deterministic. The same event sequence, admission policy version, and trusted admission context reproduce the same result.
 
+The same scenario through a second judge (recorded live from the vLLM
+Semantic Router free API on 2026-10-24) — same admission policy, a more
+cautious calibration, a different and equally deliberate outcome:
+
+```bash
+cargo run -- fixture --provider d3
+```
+
+```text
+Act 1: admission separates evidence from authority
+  judgment          beyond_scope=0.702451 destructive=0.783680 tool=merge_pull_request
+  Evidence          evidence-0001 kind=BeyondScope confidence=0.702451
+  Admission         policy=0.1 Hold(NeedsCorroborationOrReview)
+  Decision          ALLOW merge_pull_request (no evidence admitted; authorization remains active)
+```
+
+Both runs are correct per policy: a 94% single-source signal is admitted
+and suspends authorization; a 70% single-source signal is held — neither
+ignored nor made authoritative — and nothing persists.
+
 The GIF above is regenerated from the demo output itself:
 
 ```bash

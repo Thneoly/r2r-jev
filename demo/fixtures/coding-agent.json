@@ -6,5 +6,11 @@
   "tool": "merge_pull_request",
   "intent": "Merge a pull request containing unrelated repository changes",
   "beyond_scope": 0.94,
-  "destructive": 0.72
+  "destructive": 0.72,
+  "benign": {
+    "tool": "read_file",
+    "intent": "Read a source file in the same repository",
+    "beyond_scope": 0.18,
+    "destructive": 0.12
+  }
 }

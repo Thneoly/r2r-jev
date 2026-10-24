@@ -24,7 +24,20 @@ fn run() -> Result<(), String> {
     let mode = args.next().unwrap_or_else(|| "fixture".to_string());
 
     match mode.as_str() {
-        "fixture" => run_fixture_demo(),
+        "fixture" => {
+            let mut provider_name = "jev".to_string();
+            while let Some(flag) = args.next() {
+                let value = args
+                    .next()
+                    .ok_or_else(|| format!("missing value for {flag}"))?;
+                if flag == "--provider" {
+                    provider_name = value;
+                } else {
+                    return Err(format!("unknown argument: {flag}"));
+                }
+            }
+            run_fixture_demo(&provider_name)
+        }
         "live" => run_live(&mut args),
         other => Err(format!("unknown mode: {other}. Use `fixture` or `live`.")),
     }
@@ -32,11 +45,10 @@ fn run() -> Result<(), String> {
 
 /// Full three-act demo:
 /// judgment -> typed evidence -> Admission v0.1 -> R2R -> persistent state -> repair.
-fn run_fixture_demo() -> Result<(), String> {
+fn run_fixture_demo(provider_name: &str) -> Result<(), String> {
     let mut governance = Governance::new();
-
-    // Act 1: one strong signal is admitted; the second is held.
-    let risky = load_fixture_judgment()?;
+    let fixture = load_fixture(provider_name)?;
+    let risky = fixture.risky();
     let outcome = governance.observe_judgment(&risky, AdmissionContext::demo(1));
     println!("Act 1: admission separates evidence from authority");
     print_judgment(&risky, &outcome);
@@ -45,16 +57,7 @@ fn run_fixture_demo() -> Result<(), String> {
 
     // Act 2: a later, low-scoring call produces no admitted evidence, but the
     // authorization state created by Act 1 still governs the call.
-    let benign = JudgmentObserved::from_probabilities(
-        "fixture:jev-style",
-        "coder",
-        "repo-alpha",
-        "Fix the login redirect bug",
-        "read_file",
-        "Read a source file in the same repository",
-        0.18,
-        0.12,
-    );
+    let benign = fixture.benign();
     let outcome = governance.observe_judgment(&benign, AdmissionContext::demo(2));
     println!();
     println!("Act 2: rejected evidence does not erase persistent governance state");
@@ -152,6 +155,14 @@ fn run_live(args: &mut impl Iterator<Item = String>) -> Result<(), String> {
 }
 
 #[derive(serde::Deserialize)]
+struct BenignFixture {
+    tool: String,
+    intent: String,
+    beyond_scope: f64,
+    destructive: f64,
+}
+
+#[derive(serde::Deserialize)]
 struct FixtureFile {
     provider: String,
     subject: String,
@@ -161,25 +172,110 @@ struct FixtureFile {
     intent: String,
     beyond_scope: f64,
     destructive: f64,
+    benign: Option<BenignFixture>,
 }
 
-/// The recorded judgment used by Act 1. Run from the repository root.
-fn load_fixture_judgment() -> Result<JudgmentObserved, String> {
-    let raw = std::fs::read_to_string(FIXTURE_PATH)
-        .map_err(|e| format!("cannot read {FIXTURE_PATH}: {e} (run from the repository root)"))?;
-    let fixture: FixtureFile =
-        serde_json::from_str(&raw).map_err(|e| format!("invalid fixture {FIXTURE_PATH}: {e}"))?;
+impl FixtureFile {
+    fn risky(&self) -> JudgmentObserved {
+        JudgmentObserved::from_probabilities(
+            &self.provider,
+            &self.subject,
+            &self.scope,
+            &self.task,
+            &self.tool,
+            &self.intent,
+            self.beyond_scope,
+            self.destructive,
+        )
+    }
 
-    Ok(JudgmentObserved::from_probabilities(
-        fixture.provider,
-        fixture.subject,
-        fixture.scope,
-        fixture.task,
-        fixture.tool,
-        fixture.intent,
-        fixture.beyond_scope,
-        fixture.destructive,
-    ))
+    /// The Act 2 judgment. Fixtures may carry a recorded benign follow-up;
+    /// older fixtures fall back to the original recorded values.
+    fn benign(&self) -> JudgmentObserved {
+        let fallback_tool = "read_file";
+        let fallback_intent = "Read a source file in the same repository";
+        match &self.benign {
+            Some(b) => JudgmentObserved::from_probabilities(
+                &self.provider,
+                &self.subject,
+                &self.scope,
+                &self.task,
+                &b.tool,
+                &b.intent,
+                b.beyond_scope,
+                b.destructive,
+            ),
+            None => JudgmentObserved::from_probabilities(
+                &self.provider,
+                &self.subject,
+                &self.scope,
+                &self.task,
+                fallback_tool,
+                fallback_intent,
+                0.18,
+                0.12,
+            ),
+        }
+    }
+}
+
+/// Recorded judgment sets used by the fixture demo. `jev` is the original
+/// recording; `d3` was recorded live from the vLLM Semantic Router free API
+/// on 2026-10-24 — same scenario, a second judge, a different admission
+/// outcome. Run from the repository root.
+fn fixture_path(provider_name: &str) -> Result<String, String> {
+    match provider_name {
+        "jev" => Ok(FIXTURE_PATH.to_string()),
+        "d3" => Ok("demo/fixtures/coding-agent-d3.json".to_string()),
+        other => Err(format!(
+            "unknown fixture provider {other:?}; available: jev, d3"
+        )),
+    }
+}
+
+fn load_fixture(provider_name: &str) -> Result<FixtureFile, String> {
+    let path = fixture_path(provider_name)?;
+    let raw = std::fs::read_to_string(&path)
+        .map_err(|e| format!("cannot read {path}: {e} (run from the repository root)"))?;
+    serde_json::from_str(&raw).map_err(|e| format!("invalid fixture {path}: {e}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use admission::AdmissionDecision;
+    use r2r::Decision;
+
+    #[test]
+    fn jev_fixture_admits_the_strong_signal() {
+        let fixture = load_fixture("jev").expect("jev fixture");
+        let mut governance = Governance::new();
+        let outcome = governance.observe_judgment(&fixture.risky(), AdmissionContext::demo(1));
+        assert_eq!(outcome.decision, Decision::Deny);
+    }
+
+    #[test]
+    fn d3_fixture_holds_the_uncertain_signal_same_scenario() {
+        let fixture = load_fixture("d3").expect("d3 fixture");
+        assert!((fixture.beyond_scope - 0.702451).abs() < 1e-9);
+
+        let mut governance = Governance::new();
+        let outcome = governance.observe_judgment(&fixture.risky(), AdmissionContext::demo(1));
+
+        // Same scenario, a more cautious judge: both signals land in the Hold
+        // band, nothing is admitted, the call is allowed and nothing persists.
+        assert!(outcome
+            .evidence
+            .iter()
+            .all(|e| matches!(e.decision, AdmissionDecision::Hold(_))));
+        assert_eq!(outcome.decision, Decision::Allow);
+        assert!(outcome.relation_changes.is_empty());
+    }
+
+    #[test]
+    fn unknown_fixture_provider_fails_closed() {
+        assert!(fixture_path("bogus").is_err());
+    }
 }
 
 fn print_judgment(judgment: &JudgmentObserved, outcome: &Admission) {
