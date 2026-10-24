@@ -1,12 +1,17 @@
 {
   "upstreams": [
     {
-      "name": "r2r-control-plane",
+      "name": "control-plane",
       "command": "cargo",
       "args": ["run", "--quiet", "--bin", "r2r-mcp"],
-      "env": {}
+      "env": {},
+      "control_plane": true
     }
   ],
+  "governance": {
+    "subject": "agent:coder-1",
+    "scope": "repo:alpha"
+  },
   "init_timeout_ms": 180000,
   "call_timeout_ms": 120000
 }
