@@ -15,6 +15,7 @@ pub struct JudgmentObserved {
 }
 
 impl JudgmentObserved {
+    #[allow(clippy::too_many_arguments)]
     pub fn from_probabilities(
         provider: impl Into<String>,
         subject: impl Into<String>,

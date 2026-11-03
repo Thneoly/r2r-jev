@@ -240,44 +240,6 @@ fn load_fixture(provider_name: &str) -> Result<FixtureFile, String> {
     serde_json::from_str(&raw).map_err(|e| format!("invalid fixture {path}: {e}"))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use admission::AdmissionDecision;
-    use r2r::Decision;
-
-    #[test]
-    fn jev_fixture_admits_the_strong_signal() {
-        let fixture = load_fixture("jev").expect("jev fixture");
-        let mut governance = Governance::new();
-        let outcome = governance.observe_judgment(&fixture.risky(), AdmissionContext::demo(1));
-        assert_eq!(outcome.decision, Decision::Deny);
-    }
-
-    #[test]
-    fn d3_fixture_holds_the_uncertain_signal_same_scenario() {
-        let fixture = load_fixture("d3").expect("d3 fixture");
-        assert!((fixture.beyond_scope - 0.702451).abs() < 1e-9);
-
-        let mut governance = Governance::new();
-        let outcome = governance.observe_judgment(&fixture.risky(), AdmissionContext::demo(1));
-
-        // Same scenario, a more cautious judge: both signals land in the Hold
-        // band, nothing is admitted, the call is allowed and nothing persists.
-        assert!(outcome
-            .evidence
-            .iter()
-            .all(|e| matches!(e.decision, AdmissionDecision::Hold(_))));
-        assert_eq!(outcome.decision, Decision::Allow);
-        assert!(outcome.relation_changes.is_empty());
-    }
-
-    #[test]
-    fn unknown_fixture_provider_fails_closed() {
-        assert!(fixture_path("bogus").is_err());
-    }
-}
-
 fn print_judgment(judgment: &JudgmentObserved, outcome: &Admission) {
     println!(
         "  JudgmentObserved  event={} provider={}",
@@ -320,4 +282,42 @@ fn print_decision(outcome: &Admission) {
         outcome.action,
         outcome.reason
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use admission::AdmissionDecision;
+    use r2r::Decision;
+
+    #[test]
+    fn jev_fixture_admits_the_strong_signal() {
+        let fixture = load_fixture("jev").expect("jev fixture");
+        let mut governance = Governance::new();
+        let outcome = governance.observe_judgment(&fixture.risky(), AdmissionContext::demo(1));
+        assert_eq!(outcome.decision, Decision::Deny);
+    }
+
+    #[test]
+    fn d3_fixture_holds_the_uncertain_signal_same_scenario() {
+        let fixture = load_fixture("d3").expect("d3 fixture");
+        assert!((fixture.beyond_scope - 0.702451).abs() < 1e-9);
+
+        let mut governance = Governance::new();
+        let outcome = governance.observe_judgment(&fixture.risky(), AdmissionContext::demo(1));
+
+        // Same scenario, a more cautious judge: both signals land in the Hold
+        // band, nothing is admitted, the call is allowed and nothing persists.
+        assert!(outcome
+            .evidence
+            .iter()
+            .all(|e| matches!(e.decision, AdmissionDecision::Hold(_))));
+        assert_eq!(outcome.decision, Decision::Allow);
+        assert!(outcome.relation_changes.is_empty());
+    }
+
+    #[test]
+    fn unknown_fixture_provider_fails_closed() {
+        assert!(fixture_path("bogus").is_err());
+    }
 }

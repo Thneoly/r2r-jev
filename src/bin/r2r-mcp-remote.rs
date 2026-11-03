@@ -33,7 +33,7 @@ struct RemoteHttpSecurity {
 
 impl RemoteHttpSecurity {
     fn new(bearer_token: String, requests_per_minute: u64) -> Result<Self, String> {
-        if bearer_token.as_bytes().len() < 32 {
+        if bearer_token.len() < 32 {
             return Err("R2R_REMOTE_BEARER_TOKEN must contain at least 32 bytes".to_string());
         }
         if requests_per_minute == 0 {

@@ -5,7 +5,7 @@
 //! declarations, zero external dependencies.
 
 #[cfg(windows)]
-mod job {
+mod win {
     use std::sync::OnceLock;
     type Handle = isize;
     const PROCESS_TERMINATE: u32 = 0x0001;
@@ -98,7 +98,7 @@ mod job {
 /// Assign a spawned upstream child to the kill-on-close job (Windows only).
 #[cfg(windows)]
 pub fn assign_child(pid: u32) -> bool {
-    job::assign_pid(pid)
+    win::assign_pid(pid)
 }
 
 #[cfg(not(windows))]

@@ -167,6 +167,12 @@ pub struct Governance {
     governing_authorization: Option<String>,
 }
 
+impl Default for Governance {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Governance {
     pub fn new() -> Self {
         Self {

@@ -16,7 +16,11 @@ fn temp_store_path(label: &str) -> PathBuf {
     ))
 }
 
-fn run_enforce(path: &PathBuf, decision_id: &str, state_version: &str) -> std::process::Output {
+fn run_enforce(
+    path: &std::path::Path,
+    decision_id: &str,
+    state_version: &str,
+) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_r2r-enforce"))
         .args([
             "--store",

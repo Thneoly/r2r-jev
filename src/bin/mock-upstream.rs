@@ -31,9 +31,10 @@ impl ServerHandler for MockUpstream {
             "Echo the message back. Used for testing the gateway gating path.",
             schema,
         );
-        let mut result = rmcp::model::ListToolsResult::default();
-        result.tools = vec![tool];
-        Ok(result)
+        Ok(rmcp::model::ListToolsResult {
+            tools: vec![tool],
+            ..Default::default()
+        })
     }
 
     async fn call_tool(

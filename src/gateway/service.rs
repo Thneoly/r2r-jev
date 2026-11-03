@@ -19,9 +19,10 @@ use tokio::process::Command;
 const CONTROL_PLANE_PREFIX: &str = "r2r_";
 
 fn merged_tools(catalog: &[Tool]) -> ListToolsResult {
-    let mut result = ListToolsResult::default();
-    result.tools = catalog.to_vec();
-    result
+    ListToolsResult {
+        tools: catalog.to_vec(),
+        ..Default::default()
+    }
 }
 
 /// One spawned upstream MCP server and our client connection to it.
@@ -70,9 +71,10 @@ impl Authorization {
             lines.push(format!("  governing: {} {} = {}", rel_type, id, state));
         }
         lines.push(format!("  decision: {}", self.decision_id));
-        lines.push(format!(
+        lines.push(
             "  repair: call r2r_observe with a human_override event, or use the control plane to repair the relation"
-        ));
+                .to_string(),
+        );
         lines.join("\n")
     }
 }
